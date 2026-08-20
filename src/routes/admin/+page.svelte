@@ -13,6 +13,7 @@
 		createBatchSessionExportZip
 	} from '$lib/services/db';
 	import type { SessionData, KioskSettings, FrameLayout } from '$lib/types';
+	import { uploadToCloudinary } from '$lib/services/cloudStorage';
 	import PrintModal from '$lib/components/PrintModal.svelte';
 	import {
 		Shield,
@@ -244,11 +245,42 @@
 		goto('/result');
 	}
 
-	function handleImageUpload(e: Event) {
+	async function handleImageUpload(e: Event) {
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files[0]) {
 			const file = target.files[0];
 			isUploadingImage = true;
+
+			// 1. Try upload to Cloudinary in dedicated subfolder chekiyuume/frames/
+			if (
+				formSettings.cloudProvider === 'cloudinary' &&
+				formSettings.cloudinaryCloudName?.trim() &&
+				formSettings.cloudinaryUploadPreset?.trim()
+			) {
+				try {
+					const cleanName = (newFrameName || file.name.replace(/\.[^/.]+$/, ''))
+						.trim()
+						.toLowerCase()
+						.replace(/[^a-z0-9_-]/g, '_')
+						.replace(/_+/g, '_')
+						.slice(0, 30);
+					const publicId = `chekiyuume/frames/${cleanName || 'frame'}_${Date.now()}`;
+					const cloudUrl = await uploadToCloudinary(
+						file,
+						'image',
+						formSettings.cloudinaryCloudName.trim(),
+						formSettings.cloudinaryUploadPreset.trim(),
+						publicId
+					);
+					newFrameOverlayUrl = cloudUrl;
+					isUploadingImage = false;
+					return;
+				} catch (err) {
+					console.warn('[Frames] Cloudinary direct upload failed, fallback to local dataURL:', err);
+				}
+			}
+
+			// 2. Fallback to local DataURL (Offline / No Cloudinary)
 			const reader = new FileReader();
 			reader.onload = (ev) => {
 				newFrameOverlayUrl = (ev.target?.result as string) || '';
