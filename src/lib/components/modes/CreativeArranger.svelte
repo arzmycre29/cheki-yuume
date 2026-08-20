@@ -1,8 +1,9 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { sessionStore } from '$lib/stores/session';
 	import { customFramesStore } from '$lib/stores/customFrames';
 	import type { FrameLayout, PhotoItem, StickerItem } from '$lib/types';
-	import { CREATIVE_FRAMES, getLayoutById } from '$lib/config/frameLayouts';
+	import { ALL_FRAME_TEMPLATES, getLayoutById } from '$lib/config/frameLayouts';
 	import {
 		Sparkles,
 		ArrowRight,
@@ -24,7 +25,7 @@
 
 	let { onFinishArrangement }: Props = $props();
 
-	let creativeFrames = $derived($customFramesStore.filter((f) => f.totalSlots === 4 || f.totalSlots === 3 || f.totalSlots === 2 || f.totalSlots === 1));
+	let creativeFrames = $derived($customFramesStore);
 	let photos = $derived($sessionStore.photos);
 	let assignedSlotPhotoIds = $derived($sessionStore.assignedSlotPhotoIds);
 	let stickers = $derived($sessionStore.stickers || []);
@@ -33,7 +34,7 @@
 	let selectedFrame = $derived(
 		creativeFrames.find((f) => f.id === currentLayoutId) ||
 		creativeFrames[0] ||
-		CREATIVE_FRAMES[0]
+		ALL_FRAME_TEMPLATES[10]
 	);
 
 	let activeRightTab = $state<'photos' | 'stickers'>('photos');
@@ -47,9 +48,17 @@
 		'🌈', '🤍', '🦋', '🍒', '🌻', '🍰', '🐶', '⚡'
 	];
 
-	// On mount, auto-assign first N photos if slots are not fully populated
-	$effect(() => {
-		if (assignedSlotPhotoIds.length !== selectedFrame.totalSlots) {
+	onMount(() => {
+		// If current session layout is not valid or slots count mismatch, choose best initial frame
+		if (!creativeFrames.some((f) => f.id === currentLayoutId)) {
+			// Choose a frame matching the number of captured photos if possible
+			const matchingFrame = creativeFrames.find((f) => f.totalSlots === photos.length) ||
+				creativeFrames.find((f) => f.totalSlots <= photos.length) ||
+				creativeFrames[0];
+			if (matchingFrame) {
+				sessionStore.setLayout(matchingFrame.id, matchingFrame.totalSlots);
+			}
+		} else if (assignedSlotPhotoIds.length !== selectedFrame.totalSlots) {
 			sessionStore.setLayout(selectedFrame.id, selectedFrame.totalSlots);
 		}
 	});
@@ -177,19 +186,19 @@
 			</div>
 		</div>
 
-		<!-- Frame Badges Carousel -->
+		<!-- Frame Badges Carousel with Active Highlight Indicator -->
 		<div class="flex items-center gap-2 overflow-x-auto py-1 max-w-full">
 			{#each creativeFrames as frame}
 				{@const isCurrent = frame.id === selectedFrame.id}
 				<button
 					type="button"
 					onclick={() => handleSelectFrame(frame)}
-					class="flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-bold transition-all cursor-pointer shrink-0 {isCurrent ? 'bg-gradient-to-r from-indigo-500 to-rose-500 text-white shadow-lg shadow-rose-500/20 scale-105' : 'bg-zinc-800/80 text-zinc-300 hover:bg-zinc-700 hover:text-white border border-zinc-700/50'}"
+					class="flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-bold transition-all cursor-pointer shrink-0 {isCurrent ? 'bg-gradient-to-r from-indigo-500 via-purple-600 to-rose-500 text-white shadow-lg shadow-rose-500/30 scale-105 ring-2 ring-white/50' : 'bg-zinc-800/80 text-zinc-300 hover:bg-zinc-700 hover:text-white border border-zinc-700/50'}"
 				>
 					{#if frame.overlayUrl}
-						<span class="h-3.5 w-3.5 rounded-sm bg-cover bg-center border border-white/40" style="background-image: url('{frame.overlayUrl}');"></span>
+						<span class="h-4 w-4 rounded-sm bg-cover bg-center border border-white/60 shadow-xs" style="background-image: url('{frame.overlayUrl}');"></span>
 					{:else}
-						<span class="h-3.5 w-3.5 rounded-full border border-white/40" style="background-color: {frame.backgroundColor};"></span>
+						<span class="h-4 w-4 rounded-full border border-white/60 shadow-xs" style="background-color: {frame.backgroundColor};"></span>
 					{/if}
 					<span>{frame.name} ({frame.totalSlots}s)</span>
 				</button>
@@ -257,8 +266,11 @@
 				<!-- Interactive Stickers Layer on top of frame -->
 				{#each stickers as st (st.id)}
 					{@const isSelected = selectedStickerId === st.id}
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<div
 						data-sticker
+						role="button"
+						tabindex="0"
 						onpointerdown={(e) => handleStickerPointerDown(e, st.id)}
 						onclick={(e) => handleSelectSticker(e, st.id)}
 						class="absolute -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing z-30 transition-transform hover:scale-110 {isSelected ? 'ring-2 ring-rose-500 rounded-2xl bg-black/30 p-1' : ''}"

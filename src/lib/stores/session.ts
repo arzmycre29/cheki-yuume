@@ -98,7 +98,7 @@ function createSessionStore() {
 		},
 		initNewSession: (mode: CaptureMode = 'default', guestName: string = '', layoutId?: string) => {
 			const id = generateSessionId();
-			const finalLayoutId = layoutId || (mode === 'default' ? 'default-4-classic' : 'creative-4-midnight');
+			const finalLayoutId = layoutId || 'default-4-classic';
 			const layout = getLayoutById(finalLayoutId);
 			const newSession: SessionData = {
 				...initialSession,
