@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+:root {
+	--font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+	--font-display: 'Outfit', system-ui, -apple-system, sans-serif;
+}
+
+body {
+	font-family: var(--font-sans);
+	user-select: none;
+	-webkit-user-select: none;
+	-webkit-touch-callout: none;
+}
+
+h1, h2, h3, .font-display {
+	font-family: var(--font-display);
+}
+
+/* Custom kiosk flash animation */
+@keyframes flashAnimation {
+	0% { opacity: 0; }
+	15% { opacity: 1; }
+	100% { opacity: 0; }
+}
+
+.animate-shutter-flash {
+	animation: flashAnimation 0.4s ease-out forwards;
+}
+
+/* Custom pulse for countdown */
+@keyframes countdownPulse {
+	0% { transform: scale(1.4); opacity: 0; }
+	30% { transform: scale(1); opacity: 1; }
+	80% { transform: scale(0.95); opacity: 1; }
+	100% { transform: scale(0.85); opacity: 0; }
+}
+
+.animate-countdown-number {
+	animation: countdownPulse 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

@@ -1,0 +1,985 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { settingsStore } from '$lib/stores/settings';
+	import { customFramesStore } from '$lib/stores/customFrames';
+	import { cameraService, type VideoDeviceInfo } from '$lib/services/camera';
+	import {
+		getAllSessionsFromDB,
+		deleteSessionFromDB,
+		createSessionExportZip
+	} from '$lib/services/db';
+	import type { SessionData, KioskSettings, FrameLayout } from '$lib/types';
+	import PrintModal from '$lib/components/PrintModal.svelte';
+	import {
+		Shield,
+		Camera,
+		Settings2,
+		Cloud,
+		Printer,
+		Clock,
+		History,
+		Download,
+		Trash2,
+		ArrowLeft,
+		Save,
+		RefreshCw,
+		CheckCircle2,
+		AlertCircle,
+		Palette,
+		Plus,
+		Upload,
+		Image as ImageIcon,
+		X,
+		Eye,
+		ExternalLink
+	} from '@lucide/svelte';
+
+	let activeTab = $state<'general' | 'camera' | 'cloud' | 'sessions' | 'frames'>('sessions');
+
+	// Local settings form binding
+	let formSettings = $state<KioskSettings>({ ...$settingsStore });
+	let cameras = $state<VideoDeviceInfo[]>([]);
+	let testVideoElement: HTMLVideoElement | null = $state(null);
+	let isTestingCamera = $state(false);
+
+	// Session logs state
+	let sessions = $state<SessionData[]>([]);
+	let searchQuery = $state('');
+	let rePrintSession = $state<SessionData | null>(null);
+	let isRePrintModalOpen = $state(false);
+	let saveMessage = $state('');
+
+	// Custom Frame Management state
+	let frameFilterSlot = $state<number | 'all'>('all');
+	let isAddFrameModalOpen = $state(false);
+	let newFrameName = $state('');
+	let newFrameDesc = $state('');
+	let newFrameSlots = $state<number>(4);
+	let newFrameBgColor = $state('#FFFFFF');
+	let newFrameOverlayUrl = $state('');
+	let isUploadingImage = $state(false);
+
+	let allFrames = $derived($customFramesStore);
+
+	onMount(async () => {
+		formSettings = { ...$settingsStore };
+		await loadSessions();
+		await refreshCameras();
+	});
+
+	async function loadSessions() {
+		sessions = await getAllSessionsFromDB();
+	}
+
+	async function refreshCameras() {
+		cameras = await cameraService.getAvailableCameras();
+	}
+
+	async function startCameraTest() {
+		try {
+			const stream = await cameraService.startStream(
+				formSettings.cameraDeviceId,
+				formSettings.cameraResolution
+			);
+			if (testVideoElement) {
+				testVideoElement.srcObject = stream;
+				testVideoElement.play();
+				isTestingCamera = true;
+			}
+		} catch (err) {
+			console.error('Camera test failed:', err);
+		}
+	}
+
+	function stopCameraTest() {
+		cameraService.stopStream();
+		isTestingCamera = false;
+	}
+
+	function handleSaveSettings() {
+		settingsStore.updateSettings(formSettings);
+		saveMessage = 'Pengaturan berhasil disimpan!';
+		setTimeout(() => (saveMessage = ''), 3000);
+	}
+
+	async function handleDeleteSession(sessionId: string) {
+		if (confirm(`Hapus data sesi ${sessionId}?`)) {
+			await deleteSessionFromDB(sessionId);
+			await loadSessions();
+		}
+	}
+
+	async function handleExportZip(session: SessionData) {
+		try {
+			const blob = await createSessionExportZip(session);
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `${session.guestName || 'Sesi'}_${session.sessionId}.zip`;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch (err) {
+			console.error('Export ZIP failed:', err);
+		}
+	}
+
+	function handleTriggerRePrint(session: SessionData) {
+		if (session.photostripDataUrl) {
+			rePrintSession = session;
+			isRePrintModalOpen = true;
+		} else {
+			alert('Sesi ini tidak memiliki data photostrip untuk dicetak.');
+		}
+	}
+
+	function handleViewResult(session: SessionData) {
+		// Populate active session store with this session and navigate to /result
+		sessionStore.initNewSession(session.mode, session.guestName, session.layoutId);
+		if (session.photostripDataUrl) {
+			sessionStore.setPhotostrip(session.photostripDataUrl, session.photostripBlob || new Blob());
+		}
+		if (session.videostripUrl && session.videostripBlob) {
+			sessionStore.setVideostrip(session.videostripBlob, session.videostripUrl);
+		}
+		sessionStore.setLayout(session.layoutId);
+		goto('/result');
+	}
+
+	function handleImageUpload(e: Event) {
+		const target = e.target as HTMLInputElement;
+		if (target.files && target.files[0]) {
+			const file = target.files[0];
+			isUploadingImage = true;
+			const reader = new FileReader();
+			reader.onload = (ev) => {
+				newFrameOverlayUrl = (ev.target?.result as string) || '';
+				isUploadingImage = false;
+			};
+			reader.readAsDataURL(file);
+		}
+	}
+
+	function handleCreateFrame() {
+		if (!newFrameName.trim()) {
+			alert('Mohon masukkan nama frame.');
+			return;
+		}
+
+		customFramesStore.addFrame({
+			name: newFrameName,
+			description: newFrameDesc,
+			mode: 'default',
+			totalSlots: newFrameSlots,
+			backgroundColor: newFrameBgColor,
+			overlayUrl: newFrameOverlayUrl || undefined
+		});
+
+		// Reset form
+		newFrameName = '';
+		newFrameDesc = '';
+		newFrameSlots = 4;
+		newFrameBgColor = '#FFFFFF';
+		newFrameOverlayUrl = '';
+		isAddFrameModalOpen = false;
+
+		saveMessage = 'Frame baru berhasil ditambahkan!';
+		setTimeout(() => (saveMessage = ''), 3000);
+	}
+
+	function handleDeleteFrame(frameId: string, name: string) {
+		if (confirm(`Hapus template frame "${name}"?`)) {
+			customFramesStore.deleteFrame(frameId);
+			saveMessage = 'Frame berhasil dihapus!';
+			setTimeout(() => (saveMessage = ''), 3000);
+		}
+	}
+
+	function handleResetFrames() {
+		if (confirm('Kembalikan semua frame ke pengaturan bawaan standar?')) {
+			customFramesStore.resetToDefault();
+			saveMessage = 'Frame dikembalikan ke setelan pabrik!';
+			setTimeout(() => (saveMessage = ''), 3000);
+		}
+	}
+
+	let filteredSessions = $derived(
+		sessions.filter((s) => {
+			const q = searchQuery.toLowerCase();
+			return (
+				s.sessionId.toLowerCase().includes(q) ||
+				(s.guestName && s.guestName.toLowerCase().includes(q))
+			);
+		})
+	);
+
+	let filteredFrames = $derived(
+		allFrames.filter((f) => {
+			if (frameFilterSlot === 'all') return true;
+			return f.totalSlots === frameFilterSlot;
+		})
+	);
+</script>
+
+<div class="flex flex-col h-full w-full bg-zinc-950 text-zinc-100 p-6 overflow-hidden">
+	<!-- Admin Top Bar -->
+	<header class="flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl shrink-0">
+		<div class="flex items-center gap-4">
+			<button
+				type="button"
+				onclick={() => { stopCameraTest(); goto('/'); }}
+				class="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 transition-colors cursor-pointer"
+				title="Kembali ke Kiosk"
+			>
+				<ArrowLeft class="h-5 w-5" />
+			</button>
+			<div>
+				<div class="flex items-center gap-2">
+					<Shield class="h-5 w-5 text-rose-400" />
+					<h1 class="text-xl font-black text-white font-display">Kiosk Admin Dashboard</h1>
+				</div>
+				<p class="text-xs text-zinc-400">Pengaturan Kamera, Printer, Cloud & Manajemen Frame Kustom</p>
+			</div>
+		</div>
+
+		<!-- Nav Tabs -->
+		<div class="flex items-center gap-1.5 bg-zinc-800/80 p-1.5 rounded-2xl border border-zinc-700/50">
+			<button
+				type="button"
+				onclick={() => (activeTab = 'sessions')}
+				class="flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all cursor-pointer {activeTab === 'sessions' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-400 hover:text-white'}"
+			>
+				<History class="h-4 w-4" />
+				<span>Riwayat ({sessions.length})</span>
+			</button>
+			<button
+				type="button"
+				onclick={() => (activeTab = 'frames')}
+				class="flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all cursor-pointer {activeTab === 'frames' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-400 hover:text-white'}"
+			>
+				<Palette class="h-4 w-4" />
+				<span>Kelola Frame ({allFrames.length})</span>
+			</button>
+			<button
+				type="button"
+				onclick={() => (activeTab = 'camera')}
+				class="flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all cursor-pointer {activeTab === 'camera' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-400 hover:text-white'}"
+			>
+				<Camera class="h-4 w-4" />
+				<span>Kamera</span>
+			</button>
+			<button
+				type="button"
+				onclick={() => (activeTab = 'general')}
+				class="flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all cursor-pointer {activeTab === 'general' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-400 hover:text-white'}"
+			>
+				<Settings2 class="h-4 w-4" />
+				<span>Booth & Print</span>
+			</button>
+			<button
+				type="button"
+				onclick={() => (activeTab = 'cloud')}
+				class="flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all cursor-pointer {activeTab === 'cloud' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-400 hover:text-white'}"
+			>
+				<Cloud class="h-4 w-4" />
+				<span>Cloud 30-Day</span>
+			</button>
+		</div>
+	</header>
+
+	<!-- Main Content Area -->
+	<main class="flex-1 overflow-y-auto mt-6 min-h-0">
+		{#if activeTab === 'sessions'}
+			<!-- Tab 1: Sessions Log Table & Offline Recovery -->
+			<div class="flex flex-col gap-4 bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl">
+				<div class="flex items-center justify-between gap-4">
+					<div>
+						<h2 class="text-lg font-bold text-white font-display">Daftar Sesi Pengunjung</h2>
+						<p class="text-xs text-zinc-400">Semua foto mentah & video tersimpan di memori lokal kiosk untuk backup</p>
+					</div>
+
+					<div class="flex items-center gap-3">
+						<input
+							type="text"
+							bind:value={searchQuery}
+							placeholder="Cari nama tamu atau ID sesi..."
+							class="w-72 rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2 text-xs text-white placeholder-zinc-500 focus:border-rose-500 focus:outline-hidden"
+						/>
+						<button
+							type="button"
+							onclick={loadSessions}
+							class="flex items-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 px-4 py-2 text-xs font-bold text-zinc-300 border border-zinc-700 cursor-pointer"
+						>
+							<RefreshCw class="h-3.5 w-3.5" />
+							<span>Segarkan</span>
+						</button>
+					</div>
+				</div>
+
+				<!-- Table -->
+				<div class="overflow-x-auto rounded-2xl border border-zinc-800">
+					<table class="w-full text-left text-xs text-zinc-300">
+						<thead class="bg-zinc-800/80 uppercase text-[10px] font-extrabold text-zinc-400 border-b border-zinc-700/60">
+							<tr>
+								<th class="py-3 px-4">Waktu</th>
+								<th class="py-3 px-4">Nama Sesi / Tamu</th>
+								<th class="py-3 px-4">Mode</th>
+								<th class="py-3 px-4">ID Sesi</th>
+								<th class="py-3 px-4">Jumlah Foto</th>
+								<th class="py-3 px-4">Status Cetak</th>
+								<th class="py-3 px-4 text-right">Aksi</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-zinc-800/60">
+							{#if filteredSessions.length === 0}
+								<tr>
+									<td colspan="7" class="py-8 text-center text-zinc-500">
+										Belum ada riwayat sesi tersimpan.
+									</td>
+								</tr>
+							{:else}
+								{#each filteredSessions as s}
+									<tr class="hover:bg-zinc-800/40 transition-colors">
+										<td class="py-3 px-4 text-zinc-400">
+											{new Date(s.createdAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
+										</td>
+										<td class="py-3 px-4 font-bold text-white">
+											{s.guestName || '-'}
+										</td>
+										<td class="py-3 px-4">
+											<span class="rounded-md px-2 py-0.5 text-[10px] font-extrabold uppercase {s.mode === 'creative' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}">
+												{s.mode}
+											</span>
+										</td>
+										<td class="py-3 px-4 font-mono text-zinc-400">
+											{s.sessionId}
+										</td>
+										<td class="py-3 px-4">
+											{s.photos.length} Foto
+										</td>
+										<td class="py-3 px-4">
+											{#if s.printCount > 0}
+												<span class="text-emerald-400 font-semibold">{s.printCount}x Cetak</span>
+											{:else}
+												<span class="text-zinc-500">Belum Cetak</span>
+											{/if}
+										</td>
+										<td class="py-3 px-4 text-right">
+											<div class="flex items-center justify-end gap-2">
+												<!-- View Result Screen -->
+												<button
+													type="button"
+													onclick={() => handleViewResult(s)}
+													class="rounded-lg bg-rose-500/20 hover:bg-rose-500 border border-rose-500/30 p-2 text-rose-300 hover:text-white cursor-pointer transition-colors"
+													title="Buka Layar Hasil (Result Screen)"
+												>
+													<Eye class="h-3.5 w-3.5" />
+												</button>
+
+												<!-- Open Guest Share Link -->
+												<a
+													href="/share/{s.sessionId}"
+													target="_blank"
+													class="rounded-lg bg-zinc-800 hover:bg-zinc-700 p-2 text-zinc-300 hover:text-white cursor-pointer transition-colors"
+													title="Buka Link Download Tamu (/share/{s.sessionId})"
+												>
+													<ExternalLink class="h-3.5 w-3.5" />
+												</a>
+
+												<!-- Re-print -->
+												<button
+													type="button"
+													onclick={() => handleTriggerRePrint(s)}
+													class="rounded-lg bg-zinc-800 hover:bg-zinc-700 p-2 text-zinc-300 hover:text-white cursor-pointer transition-colors"
+													title="Cetak Ulang (Re-Print)"
+												>
+													<Printer class="h-3.5 w-3.5" />
+												</button>
+
+												<!-- Export ZIP -->
+												<button
+													type="button"
+													onclick={() => handleExportZip(s)}
+													class="rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/30 p-2 text-indigo-300 hover:text-white cursor-pointer transition-colors"
+													title="Unduh Paket ZIP"
+												>
+													<Download class="h-3.5 w-3.5" />
+												</button>
+
+												<!-- Delete -->
+												<button
+													type="button"
+													onclick={() => handleDeleteSession(s.sessionId)}
+													class="rounded-lg bg-red-500/10 hover:bg-red-500/30 p-2 text-red-400 cursor-pointer transition-colors"
+													title="Hapus Sesi"
+												>
+													<Trash2 class="h-3.5 w-3.5" />
+												</button>
+											</div>
+										</td>
+									</tr>
+								{/each}
+							{/if}
+						</tbody>
+					</table>
+				</div>
+			</div>
+
+		{:else if activeTab === 'frames'}
+			<!-- Tab 2: Custom Frame Management & Upload -->
+			<div class="flex flex-col gap-6 bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl">
+				<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+					<div>
+						<h2 class="text-lg font-bold text-white font-display">Manajemen Desain & Template Frame</h2>
+						<p class="text-xs text-zinc-400">Tambah frame kustom bertema event, atur warna latar, dan upload overlay PNG</p>
+					</div>
+
+					<div class="flex items-center gap-3">
+						<button
+							type="button"
+							onclick={handleResetFrames}
+							class="rounded-xl bg-zinc-800 hover:bg-zinc-700 px-4 py-2.5 text-xs font-bold text-zinc-300 border border-zinc-700 transition-all cursor-pointer"
+						>
+							Reset ke Default
+						</button>
+						<button
+							type="button"
+							onclick={() => (isAddFrameModalOpen = true)}
+							class="flex items-center gap-2 rounded-xl bg-rose-500 hover:bg-rose-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-rose-500/20 transition-all cursor-pointer"
+						>
+							<Plus class="h-4 w-4" />
+							<span>Upload Frame Baru</span>
+						</button>
+					</div>
+				</div>
+
+				<!-- Slot Filter Badges -->
+				<div class="flex items-center gap-2 border-y border-zinc-800 py-3">
+					<span class="text-xs font-bold text-zinc-400 mr-2">Filter Slot:</span>
+					{#each (['all', 1, 2, 3, 4] as const) as slotOpt}
+						<button
+							type="button"
+							onclick={() => (frameFilterSlot = slotOpt)}
+							class="rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer {frameFilterSlot === slotOpt ? 'bg-rose-500 text-white shadow-md' : 'bg-zinc-800 text-zinc-400 hover:text-white'}"
+						>
+							{slotOpt === 'all' ? 'Semua Frame' : `${slotOpt} Slot`}
+						</button>
+					{/each}
+				</div>
+
+				<!-- Grid of Frames -->
+				<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+					{#each filteredFrames as frame}
+						<div class="relative flex flex-col items-center justify-between rounded-3xl p-5 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-all shadow-md">
+							<!-- Mini Frame Thumbnail -->
+							<div class="my-2 flex items-center justify-center h-40 w-full overflow-hidden">
+								<div
+									class="relative rounded-2xl shadow-md border border-zinc-700/40 overflow-hidden"
+									style="background-color: {frame.backgroundColor || '#FFFFFF'}; height: 140px; width: auto; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
+								>
+									{#if frame.backgroundUrl}
+										<img src={frame.backgroundUrl} alt="Background" class="absolute inset-0 h-full w-full object-cover pointer-events-none" />
+									{/if}
+
+									{#each frame.slots as slot}
+										<div
+											class="absolute rounded-xs bg-zinc-700/50 border border-zinc-600/40 shadow-inner"
+											style="left: {(slot.x / frame.canvasWidth) * 100}%; top: {(slot.y / frame.canvasHeight) * 100}%; width: {(slot.width / frame.canvasWidth) * 100}%; height: {(slot.height / frame.canvasHeight) * 100}%;"
+										></div>
+									{/each}
+
+									{#if frame.overlayUrl}
+										<img src={frame.overlayUrl} alt="Overlay" class="absolute inset-0 h-full w-full object-contain pointer-events-none z-10" />
+									{/if}
+
+									{#if !frame.overlayUrl}
+										<div class="absolute bottom-1 inset-x-0 w-full text-center z-10">
+											<div class="text-[5px] font-black tracking-wider uppercase {frame.backgroundColor === '#18181B' ? 'text-white' : 'text-zinc-900'}">
+												CHEKIYUUME
+											</div>
+										</div>
+									{/if}
+								</div>
+							</div>
+
+							<!-- Card Info -->
+							<div class="w-full mt-2 text-center">
+								<div class="flex items-center justify-center gap-1.5 mb-1.5">
+									<span class="h-3 w-3 rounded-full border border-white/30" style="background-color: {frame.backgroundColor};"></span>
+									<span class="text-[10px] font-extrabold uppercase text-rose-400">{frame.totalSlots} Slot • {frame.aspectRatioLabel}</span>
+								</div>
+								<h3 class="text-sm font-bold text-white font-display truncate">
+									{frame.name}
+								</h3>
+								<p class="text-[10px] text-zinc-400 mt-1 line-clamp-2">
+									{frame.description}
+								</p>
+							</div>
+
+							<!-- Actions -->
+							<div class="w-full mt-4 pt-3 border-t border-zinc-800/80 flex items-center justify-between">
+								<span class="text-[9px] font-mono text-zinc-500 uppercase">
+									{frame.id.startsWith('custom-') ? 'Custom Upload' : 'Bawaan'}
+								</span>
+								{#if frame.id.startsWith('custom-')}
+									<button
+										type="button"
+										onclick={() => handleDeleteFrame(frame.id, frame.name)}
+										class="rounded-lg bg-red-500/10 hover:bg-red-500/30 p-1.5 text-red-400 cursor-pointer"
+										title="Hapus Frame Kustom"
+									>
+										<Trash2 class="h-3.5 w-3.5" />
+									</button>
+								{/if}
+							</div>
+						</div>
+					{/each}
+				</div>
+			</div>
+
+		{:else if activeTab === 'camera'}
+			<!-- Tab 3: Camera Settings -->
+			<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+				<div class="flex flex-col gap-5 bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl">
+					<h2 class="text-lg font-bold text-white font-display">Pengaturan Perangkat Kamera</h2>
+
+					<div>
+						<label for="camera-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Pilih Kamera</label>
+						<select
+							id="camera-select"
+							bind:value={formSettings.cameraDeviceId}
+							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+						>
+							<option value="">Default OS / Browser Camera</option>
+							{#each cameras as cam}
+								<option value={cam.deviceId}>{cam.label}</option>
+							{/each}
+						</select>
+					</div>
+
+					<div>
+						<div class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Resolusi Capture</div>
+						<div class="grid grid-cols-3 gap-2">
+							<button
+								type="button"
+								onclick={() => (formSettings.cameraResolution = '720p')}
+								class="rounded-xl py-2.5 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraResolution === '720p' ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
+							>
+								720p HD
+							</button>
+							<button
+								type="button"
+								onclick={() => (formSettings.cameraResolution = '1080p')}
+								class="rounded-xl py-2.5 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraResolution === '1080p' ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
+							>
+								1080p FHD (Standar)
+							</button>
+							<button
+								type="button"
+								onclick={() => (formSettings.cameraResolution = '4k')}
+								class="rounded-xl py-2.5 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraResolution === '4k' ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
+							>
+								4K UHD
+							</button>
+						</div>
+					</div>
+
+					<div class="flex items-center justify-between py-2 border-t border-zinc-800">
+						<div>
+							<span class="text-xs font-bold text-white">Cermin Kamera (Mirroring)</span>
+							<p class="text-[11px] text-zinc-400">Membuat preview kamera seperti cermin selfie</p>
+						</div>
+						<input
+							type="checkbox"
+							bind:checked={formSettings.isMirrored}
+							class="h-5 w-5 rounded-md accent-rose-500 cursor-pointer"
+						/>
+					</div>
+
+					<button
+						type="button"
+						onclick={handleSaveSettings}
+						class="w-full flex items-center justify-center gap-2 rounded-2xl bg-rose-500 hover:bg-rose-600 py-3.5 text-xs font-bold text-white shadow-lg shadow-rose-500/20 transition-all cursor-pointer mt-4"
+					>
+						<Save class="h-4 w-4" />
+						<span>Simpan Pengaturan Kamera</span>
+					</button>
+				</div>
+
+				<!-- Live Camera Tester -->
+				<div class="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl">
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-lg font-bold text-white font-display">Uji Coba Stream Kamera</h2>
+						{#if isTestingCamera}
+							<button
+								type="button"
+								onclick={stopCameraTest}
+								class="rounded-xl bg-red-500/20 border border-red-500/30 px-3 py-1 text-xs font-bold text-red-300 cursor-pointer"
+							>
+								Hentikan Uji
+							</button>
+						{:else}
+							<button
+								type="button"
+								onclick={startCameraTest}
+								class="rounded-xl bg-emerald-500/20 border border-emerald-500/30 px-3 py-1 text-xs font-bold text-emerald-300 cursor-pointer"
+							>
+								Mulai Uji Kamera
+							</button>
+						{/if}
+					</div>
+
+					<div class="relative flex-1 min-h-[300px] rounded-2xl bg-black overflow-hidden border border-zinc-800 flex items-center justify-center">
+						<video
+							bind:this={testVideoElement}
+							autoplay
+							playsinline
+							muted
+							class="h-full w-full object-cover {formSettings.isMirrored ? '-scale-x-100' : 'scale-x-100'}"
+						></video>
+						{#if !isTestingCamera}
+							<div class="absolute text-center text-zinc-500 text-xs">
+								<Camera class="h-8 w-8 mx-auto mb-2 opacity-50" />
+								<span>Klik "Mulai Uji Kamera" untuk melihat live feed</span>
+							</div>
+						{/if}
+					</div>
+				</div>
+			</div>
+
+		{:else if activeTab === 'general'}
+			<!-- Tab 4: Booth & Printing Settings -->
+			<div class="max-w-2xl bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl flex flex-col gap-5">
+				<h2 class="text-lg font-bold text-white font-display">Pengaturan Booth & Print Default</h2>
+
+				<div>
+					<label for="kiosk-title-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Judul Utama Booth</label>
+					<input
+						id="kiosk-title-input"
+						type="text"
+						bind:value={formSettings.kioskTitle}
+						placeholder="CHEKIYUUME"
+						class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+					/>
+				</div>
+
+				<div>
+					<label for="kiosk-sub-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Sub-Judul / Nama Studio</label>
+					<input
+						id="kiosk-sub-input"
+						type="text"
+						bind:value={formSettings.kioskSubtitle}
+						placeholder="PHOTOBOOTH STUDIO"
+						class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+					/>
+				</div>
+
+				<div class="grid grid-cols-2 gap-4">
+					<div>
+						<label for="countdown-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Countdown Hitung Mundur (Detik)</label>
+						<select
+							id="countdown-select"
+							bind:value={formSettings.countdownSeconds}
+							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+						>
+							<option value={3}>3 Detik (Sangat Cepat)</option>
+							<option value={5}>5 Detik (Standar)</option>
+							<option value={7}>7 Detik (Santai)</option>
+						</select>
+					</div>
+
+					<div>
+						<label for="reset-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Auto-Reset Result Screen</label>
+						<select
+							id="reset-select"
+							bind:value={formSettings.autoResetSeconds}
+							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+						>
+							<option value={30}>30 Detik</option>
+							<option value={60}>60 Detik</option>
+							<option value={90}>90 Detik (Standar)</option>
+						</select>
+					</div>
+				</div>
+
+				<div>
+					<label for="admin-pin-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">PIN Akses Admin</label>
+					<input
+						id="admin-pin-input"
+						type="password"
+						bind:value={formSettings.adminPin}
+						placeholder="1234"
+						class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+					/>
+				</div>
+
+				<div class="flex items-center justify-between py-2 border-t border-zinc-800">
+					<div>
+						<span class="text-xs font-bold text-white">Efek Suara (Audio Beeps & Shutter)</span>
+						<p class="text-[11px] text-zinc-400">Bunyi hitung mundur dan simulasi klik kamera</p>
+					</div>
+					<input
+						type="checkbox"
+						bind:checked={formSettings.enableSound}
+						class="h-5 w-5 rounded-md accent-rose-500 cursor-pointer"
+					/>
+				</div>
+
+				<button
+					type="button"
+					onclick={handleSaveSettings}
+					class="w-full flex items-center justify-center gap-2 rounded-2xl bg-rose-500 hover:bg-rose-600 py-3.5 text-xs font-bold text-white shadow-lg shadow-rose-500/20 transition-all cursor-pointer mt-4"
+				>
+					<Save class="h-4 w-4" />
+					<span>Simpan Pengaturan Booth</span>
+				</button>
+			</div>
+
+		{:else if activeTab === 'cloud'}
+			<!-- Tab 5: Cloud Storage Settings -->
+			<div class="max-w-2xl bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl flex flex-col gap-5">
+				<h2 class="text-lg font-bold text-white font-display">Cloud Storage & Kebijakan 30 Hari TTL</h2>
+				<p class="text-xs text-zinc-400">
+					Konfigurasi penyimpanan cloud untuk melayani QR Code download tamu. File akan tersimpan selama 30 hari secara otomatis.
+				</p>
+
+				<div>
+					<label for="cloud-provider-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Provider Cloud Storage</label>
+					<select
+						id="cloud-provider-select"
+						bind:value={formSettings.cloudProvider}
+						class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+					>
+						<option value="none">Mode Offline / Local Server Only (Tanpa Cloud Eksternal)</option>
+						<option value="r2">Cloudflare R2 (Rekomendasi - Bebas Biaya Egress & 30-Day Lifecycle)</option>
+						<option value="s3">Amazon AWS S3 / MinIO</option>
+						<option value="supabase">Supabase Storage</option>
+					</select>
+				</div>
+
+				{#if formSettings.cloudProvider !== 'none'}
+					<div>
+						<label for="cloud-base-url-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Domain Public Share Base URL</label>
+						<input
+							id="cloud-base-url-input"
+							type="text"
+							bind:value={formSettings.cloudPublicBaseUrl}
+							placeholder="https://photobooth.chekiyuume.com"
+							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+						/>
+					</div>
+
+					<div>
+						<label for="cloud-endpoint-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">S3/R2 Endpoint URL</label>
+						<input
+							id="cloud-endpoint-input"
+							type="text"
+							bind:value={formSettings.cloudEndpoint}
+							placeholder="https://<account_id>.r2.cloudflarestorage.com"
+							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+						/>
+					</div>
+
+					<div class="grid grid-cols-2 gap-4">
+						<div>
+							<label for="cloud-bucket-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Bucket Name</label>
+							<input
+								id="cloud-bucket-input"
+								type="text"
+								bind:value={formSettings.cloudBucket}
+								placeholder="chekiyuume-sessions"
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							/>
+						</div>
+						<div>
+							<label for="cloud-key-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Access Key ID</label>
+							<input
+								id="cloud-key-input"
+								type="text"
+								bind:value={formSettings.cloudAccessKey}
+								placeholder="AKIA..."
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							/>
+						</div>
+					</div>
+
+					<div>
+						<label for="cloud-secret-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Secret Access Key</label>
+						<input
+							id="cloud-secret-input"
+							type="password"
+							bind:value={formSettings.cloudSecretKey}
+							placeholder="••••••••••••"
+							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+						/>
+					</div>
+				{/if}
+
+				<button
+					type="button"
+					onclick={handleSaveSettings}
+					class="w-full flex items-center justify-center gap-2 rounded-2xl bg-rose-500 hover:bg-rose-600 py-3.5 text-xs font-bold text-white shadow-lg shadow-rose-500/20 transition-all cursor-pointer mt-4"
+				>
+					<Save class="h-4 w-4" />
+					<span>Simpan Konfigurasi Cloud</span>
+				</button>
+			</div>
+		{/if}
+
+		{#if saveMessage}
+			<div class="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-2xl bg-emerald-500 text-white px-5 py-3 shadow-2xl font-bold text-xs animate-in slide-in-from-bottom duration-200">
+				<CheckCircle2 class="h-4 w-4" />
+				<span>{saveMessage}</span>
+			</div>
+		{/if}
+	</main>
+
+	<!-- Modal: Upload & Tambah Frame Baru -->
+	{#if isAddFrameModalOpen}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-200">
+			<div class="w-full max-w-lg rounded-3xl bg-zinc-900 border border-zinc-800 p-6 sm:p-8 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+				<!-- Header -->
+				<div class="flex items-center justify-between pb-4 border-b border-zinc-800 shrink-0">
+					<div class="flex items-center gap-3">
+						<div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30">
+							<Palette class="h-5 w-5" />
+						</div>
+						<div>
+							<h3 class="text-lg font-bold text-white font-display">Tambah Template Frame Baru</h3>
+							<p class="text-xs text-zinc-400">Atur jumlah slot dan upload desain frame kustom</p>
+						</div>
+					</div>
+					<button
+						type="button"
+						onclick={() => (isAddFrameModalOpen = false)}
+						class="flex h-9 w-9 items-center justify-center rounded-xl bg-zinc-800 text-zinc-400 hover:text-white cursor-pointer"
+					>
+						<X class="h-4 w-4" />
+					</button>
+				</div>
+
+				<!-- Form Body -->
+				<div class="flex flex-col gap-4 py-5 overflow-y-auto flex-1">
+					<div>
+						<label for="new-frame-name" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Nama Frame</label>
+						<input
+							id="new-frame-name"
+							type="text"
+							bind:value={newFrameName}
+							placeholder="Contoh: Wedding Kevin & Vania 4-Cut"
+							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-2.5 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+						/>
+					</div>
+
+					<div>
+						<label for="new-frame-desc" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Deskripsi / Catatan Event</label>
+						<input
+							id="new-frame-desc"
+							type="text"
+							bind:value={newFrameDesc}
+							placeholder="Contoh: Frame custom tema gold & floral"
+							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-2.5 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+						/>
+					</div>
+
+					<div>
+						<div class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Jumlah Slot Foto</div>
+						<div class="grid grid-cols-4 gap-2">
+							{#each [1, 2, 3, 4] as count}
+								<button
+									type="button"
+									onclick={() => (newFrameSlots = count)}
+									class="rounded-xl py-2 text-xs font-bold border transition-all cursor-pointer {newFrameSlots === count ? 'bg-rose-500 text-white border-rose-500' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
+								>
+									{count} Slot
+								</button>
+							{/each}
+						</div>
+					</div>
+
+					<div>
+						<label for="new-frame-bg" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Warna Background Frame</label>
+						<div class="flex items-center gap-3">
+							<input
+								id="new-frame-bg"
+								type="color"
+								bind:value={newFrameBgColor}
+								class="h-10 w-16 rounded-xl bg-transparent cursor-pointer border border-zinc-700 p-1"
+							/>
+							<input
+								type="text"
+								bind:value={newFrameBgColor}
+								class="w-32 rounded-xl bg-zinc-800 border border-zinc-700 py-2 px-3 text-xs text-white font-mono"
+							/>
+							<!-- Quick Presets -->
+							<div class="flex gap-1.5">
+								{#each ['#FFFFFF', '#18181B', '#FDF2F0', '#EFF6F1', '#F0F7FF', '#FAF7F2'] as preset}
+									<button
+										type="button"
+										onclick={() => (newFrameBgColor = preset)}
+										class="h-7 w-7 rounded-full border border-white/20 cursor-pointer transition-transform hover:scale-110"
+										style="background-color: {preset};"
+										title={preset}
+									></button>
+								{/each}
+							</div>
+						</div>
+					</div>
+
+					<!-- Image Overlay Upload -->
+					<div>
+						<div class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Gambar Overlay / Frame Artwork (Opsional PNG)</div>
+						<label class="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-zinc-700 hover:border-rose-500/60 bg-zinc-800/40 p-5 text-center cursor-pointer transition-all">
+							{#if newFrameOverlayUrl}
+								<div class="relative max-h-32 mb-2">
+									<img src={newFrameOverlayUrl} alt="Preview Frame" class="max-h-32 rounded-lg object-contain shadow-md" />
+									<button
+										type="button"
+										onclick={(e) => { e.preventDefault(); newFrameOverlayUrl = ''; }}
+										class="absolute -top-2 -right-2 rounded-full bg-red-500 text-white p-1 shadow-md"
+									>
+										<X class="h-3 w-3" />
+									</button>
+								</div>
+								<span class="text-[11px] text-emerald-400 font-bold">✓ Gambar frame siap dipasang</span>
+							{:else}
+								<Upload class="h-7 w-7 text-zinc-500 mb-2" />
+								<span class="text-xs font-bold text-zinc-300">Pilih berkas gambar (PNG transparan disarankan)</span>
+								<span class="text-[10px] text-zinc-500 mt-1">Lebar 1080px (sesuai spesifikasi strip)</span>
+							{/if}
+							<input type="file" accept="image/png,image/jpeg,image/webp" class="hidden" onchange={handleImageUpload} />
+						</label>
+					</div>
+				</div>
+
+				<!-- Footer -->
+				<div class="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3 shrink-0">
+					<button
+						type="button"
+						onclick={() => (isAddFrameModalOpen = false)}
+						class="rounded-xl bg-zinc-800 hover:bg-zinc-700 px-5 py-2.5 text-xs font-bold text-zinc-300 cursor-pointer"
+					>
+						Batal
+					</button>
+					<button
+						type="button"
+						onclick={handleCreateFrame}
+						class="flex items-center gap-2 rounded-xl bg-rose-500 hover:bg-rose-600 px-6 py-2.5 text-xs font-bold text-white shadow-lg shadow-rose-500/20 cursor-pointer"
+					>
+						<Save class="h-4 w-4" />
+						<span>Simpan Frame</span>
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Re-Print Modal -->
+	{#if rePrintSession && rePrintSession.photostripDataUrl}
+		<PrintModal
+			isOpen={isRePrintModalOpen}
+			photostripDataUrl={rePrintSession.photostripDataUrl}
+			onClose={() => { isRePrintModalOpen = false; rePrintSession = null; }}
+		/>
+	{/if}
+</div>
