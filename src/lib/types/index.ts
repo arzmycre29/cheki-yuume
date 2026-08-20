@@ -40,6 +40,15 @@ export interface FrameLayout {
 	recommendedPaper: '4R' | 'A4';
 }
 
+export interface StickerItem {
+	id: string;
+	emoji: string;
+	x: number; // percentage of canvas (0-100)
+	y: number; // percentage of canvas (0-100)
+	size: number; // in pixels or percentage
+	rotation?: number; // degrees
+}
+
 export interface SessionData {
 	sessionId: string;
 	guestName: string;
@@ -48,6 +57,7 @@ export interface SessionData {
 	layoutId: string;
 	photos: PhotoItem[];
 	assignedSlotPhotoIds: (string | null)[];
+	stickers?: StickerItem[];
 	photostripDataUrl: string | null;
 	photostripBlob: Blob | null;
 	videostripBlob: Blob | null;

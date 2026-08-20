@@ -1,4 +1,4 @@
-import type { FrameLayout, PhotoItem } from '$lib/types';
+import type { FrameLayout, PhotoItem, StickerItem } from '$lib/types';
 
 function loadImage(src: string): Promise<HTMLImageElement> {
 	return new Promise((resolve, reject) => {
@@ -14,6 +14,7 @@ export interface RenderOptions {
 	layout: FrameLayout;
 	photos: PhotoItem[];
 	slotPhotoIds: (string | null)[];
+	stickers?: StickerItem[];
 	guestName?: string;
 	sessionId?: string;
 	brandingTitle?: string;
@@ -22,7 +23,7 @@ export interface RenderOptions {
 }
 
 /**
- * Draws rounded rectangle path on canvas context
+ * Draws rounded rectangle path on canvas
  */
 function drawRoundedRect(
 	ctx: CanvasRenderingContext2D,
@@ -53,6 +54,7 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		layout,
 		photos,
 		slotPhotoIds,
+		stickers = [],
 		guestName = '',
 		sessionId = '',
 		brandingTitle = 'CHEKIYUUME',
@@ -155,7 +157,25 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		}
 	}
 
-	// 5. Draw Footer / Branding Area (only if no custom artwork overlay is applied)
+	// 5. Draw Stickers (if any)
+	if (stickers && stickers.length > 0) {
+		for (const st of stickers) {
+			ctx.save();
+			const px = (st.x / 100) * layout.canvasWidth;
+			const py = (st.y / 100) * layout.canvasHeight;
+			ctx.translate(px, py);
+			if (st.rotation) {
+				ctx.rotate((st.rotation * Math.PI) / 180);
+			}
+			ctx.font = `${st.size || 80}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.fillText(st.emoji, 0, 0);
+			ctx.restore();
+		}
+	}
+
+	// 6. Draw Footer / Branding Area (only if no custom artwork overlay is applied)
 	if (!layout.overlayUrl) {
 		const isDarkBg = layout.backgroundColor.toLowerCase() === '#18181b' || layout.backgroundColor.toLowerCase() === '#000000';
 		const textColor = isDarkBg ? '#F4F4F5' : '#18181B';

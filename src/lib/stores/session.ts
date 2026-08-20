@@ -26,6 +26,7 @@ const initialSession: SessionData = {
 	layoutId: 'default-4-classic',
 	photos: [],
 	assignedSlotPhotoIds: [],
+	stickers: [],
 	photostripDataUrl: null,
 	photostripBlob: null,
 	videostripBlob: null,
@@ -200,6 +201,38 @@ function createSessionStore() {
 					newAssigned[slotIndex] = photoId;
 				}
 				const updated = { ...s, assignedSlotPhotoIds: newAssigned };
+				persistToSessionStorage(updated);
+				return updated;
+			});
+		},
+		addSticker: (sticker: StickerItem) => {
+			update((s) => {
+				const currentStickers = s.stickers || [];
+				const updated = { ...s, stickers: [...currentStickers, sticker] };
+				persistToSessionStorage(updated);
+				return updated;
+			});
+		},
+		updateSticker: (id: string, updates: Partial<StickerItem>) => {
+			update((s) => {
+				const currentStickers = s.stickers || [];
+				const updatedStickers = currentStickers.map((st) => (st.id === id ? { ...st, ...updates } : st));
+				const updated = { ...s, stickers: updatedStickers };
+				persistToSessionStorage(updated);
+				return updated;
+			});
+		},
+		removeSticker: (id: string) => {
+			update((s) => {
+				const currentStickers = s.stickers || [];
+				const updated = { ...s, stickers: currentStickers.filter((st) => st.id !== id) };
+				persistToSessionStorage(updated);
+				return updated;
+			});
+		},
+		clearStickers: () => {
+			update((s) => {
+				const updated = { ...s, stickers: [] };
 				persistToSessionStorage(updated);
 				return updated;
 			});
