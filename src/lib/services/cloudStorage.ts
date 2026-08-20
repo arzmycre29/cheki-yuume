@@ -76,6 +76,19 @@ export async function uploadSessionToCloud(
 		let photoUrl: string | null = null;
 		let videoUrl: string | null = null;
 
+		// Format structured folder name: chekiyuume/{guestName}-{sessionId}/
+		const sanitizedGuestName = session.guestName
+			? session.guestName
+					.trim()
+					.toLowerCase()
+					.replace(/[^a-z0-9_-]/g, '_')
+					.replace(/_+/g, '_')
+					.slice(0, 30)
+			: 'guest';
+		const sessionFolder = `${sanitizedGuestName}-${session.sessionId}`;
+		const photoPublicId = `chekiyuume/${sessionFolder}/photostrip`;
+		const videoPublicId = `chekiyuume/${sessionFolder}/videostrip`;
+
 		try {
 			// 1. Upload Photostrip
 			if (session.photostripBlob) {
@@ -84,7 +97,7 @@ export async function uploadSessionToCloud(
 					'image',
 					cloudName,
 					uploadPreset,
-					`chekiyuume_${session.sessionId}_photo`
+					photoPublicId
 				);
 			} else if (session.photostripDataUrl) {
 				const res = await fetch(session.photostripDataUrl);
@@ -94,7 +107,7 @@ export async function uploadSessionToCloud(
 					'image',
 					cloudName,
 					uploadPreset,
-					`chekiyuume_${session.sessionId}_photo`
+					photoPublicId
 				);
 			}
 
@@ -105,7 +118,7 @@ export async function uploadSessionToCloud(
 					'video',
 					cloudName,
 					uploadPreset,
-					`chekiyuume_${session.sessionId}_video`
+					videoPublicId
 				);
 			}
 
