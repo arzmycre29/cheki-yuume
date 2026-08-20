@@ -7,7 +7,10 @@
 	import {
 		getAllSessionsFromDB,
 		deleteSessionFromDB,
-		createSessionExportZip
+		deleteMultipleSessionsFromDB,
+		deleteAllSessionsFromDB,
+		createSessionExportZip,
+		createBatchSessionExportZip
 	} from '$lib/services/db';
 	import type { SessionData, KioskSettings, FrameLayout } from '$lib/types';
 	import PrintModal from '$lib/components/PrintModal.svelte';
@@ -32,7 +35,12 @@
 		Image as ImageIcon,
 		X,
 		Eye,
-		ExternalLink
+		ExternalLink,
+		Archive,
+		CheckSquare,
+		Square,
+		Layers,
+		AlertTriangle
 	} from '@lucide/svelte';
 
 	let activeTab = $state<'general' | 'camera' | 'cloud' | 'sessions' | 'frames'>('sessions');
@@ -110,17 +118,107 @@
 		}
 	}
 
-	async function handleExportZip(session: SessionData) {
+	// Multi-select & Batch states
+	let selectedSessionIds = $state<string[]>([]);
+	let isExportingBatch = $state(false);
+
+	let isAllSelected = $derived(
+		filteredSessions.length > 0 &&
+		filteredSessions.every((s) => selectedSessionIds.includes(s.sessionId))
+	);
+
+	let selectedSessions = $derived(
+		sessions.filter((s) => selectedSessionIds.includes(s.sessionId))
+	);
+
+	function toggleSelectAll() {
+		if (isAllSelected) {
+			selectedSessionIds = [];
+		} else {
+			selectedSessionIds = filteredSessions.map((s) => s.sessionId);
+		}
+	}
+
+	function toggleSelectSession(id: string) {
+		if (selectedSessionIds.includes(id)) {
+			selectedSessionIds = selectedSessionIds.filter((sId) => sId !== id);
+		} else {
+			selectedSessionIds = [...selectedSessionIds, id];
+		}
+	}
+
+	function clearSelection() {
+		selectedSessionIds = [];
+	}
+
+	async function handleMultiSelectBackup() {
+		if (selectedSessions.length === 0) return;
 		try {
-			const blob = await createSessionExportZip(session);
+			isExportingBatch = true;
+			const blob = await createBatchSessionExportZip(selectedSessions);
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
-			a.download = `${session.guestName || 'Sesi'}_${session.sessionId}.zip`;
+			a.download = `ChekiYuume_Backup_${selectedSessions.length}_Sesi_${new Date().toISOString().slice(0, 10)}.zip`;
 			a.click();
 			URL.revokeObjectURL(url);
+			saveMessage = `Berhasil mengunduh backup ${selectedSessions.length} sesi!`;
+			setTimeout(() => (saveMessage = ''), 4000);
 		} catch (err) {
-			console.error('Export ZIP failed:', err);
+			console.error('Batch backup failed:', err);
+			alert('Gagal membuat paket ZIP batch backup.');
+		} finally {
+			isExportingBatch = false;
+		}
+	}
+
+	async function handleBatchBackupAll() {
+		if (sessions.length === 0) {
+			alert('Tidak ada sesi yang tersimpan untuk di-backup.');
+			return;
+		}
+		try {
+			isExportingBatch = true;
+			const blob = await createBatchSessionExportZip(sessions);
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `ChekiYuume_FULL_BACKUP_${sessions.length}_Sesi_${new Date().toISOString().slice(0, 10)}.zip`;
+			a.click();
+			URL.revokeObjectURL(url);
+			saveMessage = `Berhasil mengunduh FULL BACKUP seluruh (${sessions.length}) sesi!`;
+			setTimeout(() => (saveMessage = ''), 4000);
+		} catch (err) {
+			console.error('Full batch backup failed:', err);
+			alert('Gagal membuat paket FULL backup.');
+		} finally {
+			isExportingBatch = false;
+		}
+	}
+
+	async function handleMultiSelectDelete() {
+		if (selectedSessionIds.length === 0) return;
+		if (confirm(`Yakin ingin MENGHAPUS PERMANEN ${selectedSessionIds.length} sesi terpilih dari penyimpanan kios?`)) {
+			await deleteMultipleSessionsFromDB(selectedSessionIds);
+			selectedSessionIds = [];
+			await loadSessions();
+			saveMessage = `${selectedSessionIds.length} sesi berhasil dihapus!`;
+			setTimeout(() => (saveMessage = ''), 3000);
+		}
+	}
+
+	async function handleBatchDeleteAll() {
+		if (sessions.length === 0) {
+			alert('Tidak ada data sesi untuk dihapus.');
+			return;
+		}
+		const input = prompt(`PERINGATAN: Ini akan MENGHAPUS SEMUA ${sessions.length} riwayat sesi secara permanen!\n\nKetik "HAPUS" untuk konfirmasi:`);
+		if (input === 'HAPUS' || input === 'hapus') {
+			await deleteAllSessionsFromDB();
+			selectedSessionIds = [];
+			await loadSessions();
+			saveMessage = 'Semua riwayat sesi berhasil dibersihkan!';
+			setTimeout(() => (saveMessage = ''), 3000);
 		}
 	}
 
@@ -290,37 +388,130 @@
 	<!-- Main Content Area -->
 	<main class="flex-1 overflow-y-auto mt-6 min-h-0">
 		{#if activeTab === 'sessions'}
-			<!-- Tab 1: Sessions Log Table & Offline Recovery -->
+			<!-- Tab 1: Sessions Log Table & Batch Management -->
 			<div class="flex flex-col gap-4 bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl">
-				<div class="flex items-center justify-between gap-4">
+				<!-- Header with Global Batch Buttons & Search -->
+				<div class="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4">
 					<div>
-						<h2 class="text-lg font-bold text-white font-display">Daftar Sesi Pengunjung</h2>
-						<p class="text-xs text-zinc-400">Semua foto mentah & video tersimpan di memori lokal kiosk untuk backup</p>
+						<h2 class="text-lg font-bold text-white font-display flex items-center gap-2">
+							<span>Manajemen Sesi Pengunjung</span>
+							<span class="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-400 font-mono border border-zinc-700">
+								{sessions.length} Sesi
+							</span>
+						</h2>
+						<p class="text-xs text-zinc-400">Semua foto snapshot mentah, video BTS, photostrip & videostrip tersimpan aman di IndexedDB kiosk</p>
 					</div>
 
-					<div class="flex items-center gap-3">
+					<div class="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
 						<input
 							type="text"
 							bind:value={searchQuery}
 							placeholder="Cari nama tamu atau ID sesi..."
-							class="w-72 rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2 text-xs text-white placeholder-zinc-500 focus:border-rose-500 focus:outline-hidden"
+							class="flex-1 sm:w-64 rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2 text-xs text-white placeholder-zinc-500 focus:border-rose-500 focus:outline-hidden"
 						/>
 						<button
 							type="button"
 							onclick={loadSessions}
-							class="flex items-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 px-4 py-2 text-xs font-bold text-zinc-300 border border-zinc-700 cursor-pointer"
+							class="flex items-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 px-3.5 py-2 text-xs font-bold text-zinc-300 border border-zinc-700 cursor-pointer"
+							title="Segarkan data dari database"
 						>
 							<RefreshCw class="h-3.5 w-3.5" />
 							<span>Segarkan</span>
 						</button>
+
+						<!-- Global Batch Backup All -->
+						<button
+							type="button"
+							onclick={handleBatchBackupAll}
+							disabled={sessions.length === 0 || isExportingBatch}
+							class="flex items-center gap-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600 border border-indigo-500/40 px-3.5 py-2 text-xs font-bold text-indigo-300 hover:text-white transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+							title="Backup SEMUA sesi ke dalam 1 file master ZIP"
+						>
+							<Archive class="h-3.5 w-3.5" />
+							<span>Backup Semua ({sessions.length})</span>
+						</button>
+
+						<!-- Global Batch Delete All -->
+						<button
+							type="button"
+							onclick={handleBatchDeleteAll}
+							disabled={sessions.length === 0}
+							class="flex items-center gap-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/30 border border-red-500/30 px-3.5 py-2 text-xs font-bold text-red-400 hover:text-red-200 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+							title="Hapus SEMUA riwayat sesi"
+						>
+							<Trash2 class="h-3.5 w-3.5" />
+							<span>Hapus Semua</span>
+						</button>
 					</div>
 				</div>
 
-				<!-- Table -->
+				<!-- Multi-Select Action Bar (Shows when 1 or more sessions selected) -->
+				{#if selectedSessionIds.length > 0}
+					<div class="flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-indigo-950/80 to-purple-950/80 border border-indigo-500/50 rounded-2xl p-3.5 shadow-xl animate-in fade-in slide-in-from-top-2 duration-200">
+						<div class="flex items-center gap-2.5">
+							<div class="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-500 text-white font-bold text-xs">
+								{selectedSessionIds.length}
+							</div>
+							<span class="text-xs font-bold text-white">
+								{selectedSessionIds.length} sesi terpilih dari {filteredSessions.length} sesi yang ditampilkan
+							</span>
+						</div>
+
+						<div class="flex items-center gap-2">
+							<!-- Multi-Select Backup ZIP -->
+							<button
+								type="button"
+								onclick={handleMultiSelectBackup}
+								disabled={isExportingBatch}
+								class="flex items-center gap-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all cursor-pointer disabled:opacity-50"
+							>
+								{#if isExportingBatch}
+									<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+									<span>Membuat ZIP...</span>
+								{:else}
+									<Download class="h-3.5 w-3.5" />
+									<span>Backup Terpilih ({selectedSessionIds.length}) (.ZIP)</span>
+								{/if}
+							</button>
+
+							<!-- Multi-Select Delete -->
+							<button
+								type="button"
+								onclick={handleMultiSelectDelete}
+								class="flex items-center gap-1.5 rounded-xl bg-red-500 hover:bg-red-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all cursor-pointer"
+							>
+								<Trash2 class="h-3.5 w-3.5" />
+								<span>Hapus Terpilih ({selectedSessionIds.length})</span>
+							</button>
+
+							<!-- Clear Selection -->
+							<button
+								type="button"
+								onclick={clearSelection}
+								class="flex items-center gap-1 rounded-xl bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-xs font-bold text-zinc-300 hover:text-white cursor-pointer"
+							>
+								<X class="h-3.5 w-3.5" />
+								<span>Batal</span>
+							</button>
+						</div>
+					</div>
+				{/if}
+
+				<!-- Table with Master & Row Checkboxes -->
 				<div class="overflow-x-auto rounded-2xl border border-zinc-800">
 					<table class="w-full text-left text-xs text-zinc-300">
-						<thead class="bg-zinc-800/80 uppercase text-[10px] font-extrabold text-zinc-400 border-b border-zinc-700/60">
+						<thead class="bg-zinc-800/80 uppercase text-[10px] font-extrabold text-zinc-400 border-b border-zinc-700/60 select-none">
 							<tr>
+								<!-- Master Checkbox -->
+								<th class="py-3 px-4 w-10 text-center">
+									<input
+										type="checkbox"
+										checked={isAllSelected}
+										onchange={toggleSelectAll}
+										class="h-4 w-4 rounded-md accent-indigo-500 cursor-pointer"
+										title={isAllSelected ? 'Batalkan pilih semua' : 'Pilih semua sesi'}
+									/>
+								</th>
 								<th class="py-3 px-4">Waktu</th>
 								<th class="py-3 px-4">Nama Sesi / Tamu</th>
 								<th class="py-3 px-4">Mode</th>
@@ -333,13 +524,23 @@
 						<tbody class="divide-y divide-zinc-800/60">
 							{#if filteredSessions.length === 0}
 								<tr>
-									<td colspan="7" class="py-8 text-center text-zinc-500">
+									<td colspan="8" class="py-8 text-center text-zinc-500">
 										Belum ada riwayat sesi tersimpan.
 									</td>
 								</tr>
 							{:else}
 								{#each filteredSessions as s}
-									<tr class="hover:bg-zinc-800/40 transition-colors">
+									{@const isSelected = selectedSessionIds.includes(s.sessionId)}
+									<tr class="transition-colors {isSelected ? 'bg-indigo-950/30 hover:bg-indigo-950/50' : 'hover:bg-zinc-800/40'}">
+										<!-- Row Checkbox -->
+										<td class="py-3 px-4 text-center">
+											<input
+												type="checkbox"
+												checked={isSelected}
+												onchange={() => toggleSelectSession(s.sessionId)}
+												class="h-4 w-4 rounded-md accent-indigo-500 cursor-pointer"
+											/>
+										</td>
 										<td class="py-3 px-4 text-zinc-400">
 											{new Date(s.createdAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
 										</td>
@@ -396,22 +597,22 @@
 													<Printer class="h-3.5 w-3.5" />
 												</button>
 
-												<!-- Export ZIP -->
+												<!-- Export Single ZIP -->
 												<button
 													type="button"
 													onclick={() => handleExportZip(s)}
 													class="rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/30 p-2 text-indigo-300 hover:text-white cursor-pointer transition-colors"
-													title="Unduh Paket ZIP"
+													title="Unduh Paket ZIP Sesi Ini"
 												>
 													<Download class="h-3.5 w-3.5" />
 												</button>
 
-												<!-- Delete -->
+												<!-- Delete Single -->
 												<button
 													type="button"
 													onclick={() => handleDeleteSession(s.sessionId)}
 													class="rounded-lg bg-red-500/10 hover:bg-red-500/30 p-2 text-red-400 cursor-pointer transition-colors"
-													title="Hapus Sesi"
+													title="Hapus Sesi Ini"
 												>
 													<Trash2 class="h-3.5 w-3.5" />
 												</button>

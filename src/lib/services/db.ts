@@ -121,57 +121,99 @@ export async function deleteSessionFromDB(sessionId: string): Promise<void> {
 	}
 }
 
+export async function deleteMultipleSessionsFromDB(sessionIds: string[]): Promise<void> {
+	try {
+		const db = await openDB();
+		const tx = db.transaction(STORE_SESSIONS, 'readwrite');
+		const store = tx.objectStore(STORE_SESSIONS);
+		for (const id of sessionIds) {
+			store.delete(id);
+		}
+		await new Promise<void>((resolve, reject) => {
+			tx.oncomplete = () => resolve();
+			tx.onerror = () => reject(tx.error);
+		});
+	} catch (err) {
+		console.error('[DB] Failed to delete multiple sessions:', err);
+	}
+}
+
+export async function deleteAllSessionsFromDB(): Promise<void> {
+	try {
+		const db = await openDB();
+		const tx = db.transaction(STORE_SESSIONS, 'readwrite');
+		const store = tx.objectStore(STORE_SESSIONS);
+		await new Promise<void>((resolve, reject) => {
+			const req = store.clear();
+			req.onsuccess = () => resolve();
+			req.onerror = () => reject(req.error);
+		});
+	} catch (err) {
+		console.error('[DB] Failed to clear all sessions:', err);
+	}
+}
+
 /**
- * Exports all photos, BTS videos, photostrip, videostrip, and manifest as a ZIP package
+ * Exports single session photos, BTS videos, photostrip, videostrip, and manifest as a ZIP package
  */
 export async function createSessionExportZip(session: SessionData): Promise<Blob> {
+	return createBatchSessionExportZip([session]);
+}
+
+/**
+ * Exports multiple sessions into a unified ZIP archive organized by session folder
+ */
+export async function createBatchSessionExportZip(sessions: SessionData[]): Promise<Blob> {
 	const zip = new JSZip();
-	const folder = zip.folder(session.sessionId) || zip;
 
-	// 1. Raw Photos
-	const photosFolder = folder.folder('raw_photos');
-	for (let i = 0; i < session.photos.length; i++) {
-		const p = session.photos[i];
-		if (p.dataUrl) {
-			const base64Data = p.dataUrl.split(',')[1];
-			photosFolder?.file(`photo_${i + 1}.jpg`, base64Data, { base64: true });
+	for (const session of sessions) {
+		const folder = zip.folder(session.sessionId) || zip;
+
+		// 1. Raw Photos
+		const photosFolder = folder.folder('raw_photos');
+		for (let i = 0; i < session.photos.length; i++) {
+			const p = session.photos[i];
+			if (p.dataUrl) {
+				const base64Data = p.dataUrl.split(',')[1];
+				photosFolder?.file(`photo_${i + 1}.jpg`, base64Data, { base64: true });
+			}
 		}
-	}
 
-	// 2. BTS Videos
-	const btsFolder = folder.folder('bts_videos');
-	for (let i = 0; i < session.photos.length; i++) {
-		const p = session.photos[i];
-		if (p.btsVideoBlob) {
-			btsFolder?.file(`bts_${i + 1}.webm`, p.btsVideoBlob);
+		// 2. BTS Videos
+		const btsFolder = folder.folder('bts_videos');
+		for (let i = 0; i < session.photos.length; i++) {
+			const p = session.photos[i];
+			if (p.btsVideoBlob) {
+				btsFolder?.file(`bts_${i + 1}.webm`, p.btsVideoBlob);
+			}
 		}
-	}
 
-	// 3. Final Photostrip
-	if (session.photostripBlob) {
-		folder.file('photostrip.png', session.photostripBlob);
-	} else if (session.photostripDataUrl) {
-		const base64Data = session.photostripDataUrl.split(',')[1];
-		folder.file('photostrip.png', base64Data, { base64: true });
-	}
+		// 3. Final Photostrip
+		if (session.photostripBlob) {
+			folder.file('photostrip.png', session.photostripBlob);
+		} else if (session.photostripDataUrl) {
+			const base64Data = session.photostripDataUrl.split(',')[1];
+			folder.file('photostrip.png', base64Data, { base64: true });
+		}
 
-	// 4. Final Videostrip
-	if (session.videostripBlob) {
-		folder.file('videostrip.mp4', session.videostripBlob);
-	}
+		// 4. Final Videostrip
+		if (session.videostripBlob) {
+			folder.file('videostrip.mp4', session.videostripBlob);
+		}
 
-	// 5. Manifest metadata
-	const manifest = {
-		sessionId: session.sessionId,
-		guestName: session.guestName,
-		mode: session.mode,
-		layoutId: session.layoutId,
-		createdAt: new Date(session.createdAt).toISOString(),
-		totalPhotos: session.photos.length,
-		printCount: session.printCount,
-		cloudShareUrl: session.cloudShareUrl
-	};
-	folder.file('manifest.json', JSON.stringify(manifest, null, 2));
+		// 5. Manifest metadata
+		const manifest = {
+			sessionId: session.sessionId,
+			guestName: session.guestName,
+			mode: session.mode,
+			layoutId: session.layoutId,
+			createdAt: new Date(session.createdAt).toISOString(),
+			totalPhotos: session.photos.length,
+			printCount: session.printCount,
+			cloudShareUrl: session.cloudShareUrl
+		};
+		folder.file('manifest.json', JSON.stringify(manifest, null, 2));
+	}
 
 	return await zip.generateAsync({ type: 'blob' });
 }
