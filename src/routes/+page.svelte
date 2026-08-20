@@ -313,22 +313,38 @@
 						onclick={() => handleSelectTheme(theme)}
 						class="group relative flex flex-col items-center justify-between rounded-3xl p-5 border text-center transition-all duration-300 cursor-pointer {isSelected ? 'bg-zinc-800/90 border-rose-500 ring-2 ring-rose-500/50 shadow-xl shadow-rose-500/10' : 'bg-zinc-900/80 border-zinc-800 hover:bg-zinc-800/60 hover:border-zinc-700'}"
 					>
-						<!-- Mini Frame Preview with Theme Background Color -->
-						<div class="my-3 flex items-center justify-center h-36 w-full overflow-hidden">
+						<!-- Mini Frame Preview with Real Custom Artwork & Percentage Slots -->
+						<div class="my-3 flex items-center justify-center h-40 w-full overflow-hidden">
 							<div
-								class="relative flex flex-col items-center justify-between rounded-xl p-1.5 shadow-md border border-zinc-700/30 transition-transform group-hover:scale-105"
-								style="background-color: {theme.backgroundColor}; height: 135px; width: auto; aspect-ratio: {theme.canvasWidth} / {theme.canvasHeight};"
+								class="relative rounded-2xl shadow-lg border border-zinc-700/40 overflow-hidden transition-transform group-hover:scale-105"
+								style="background-color: {theme.backgroundColor || '#FFFFFF'}; height: 145px; width: auto; aspect-ratio: {theme.canvasWidth} / {theme.canvasHeight};"
 							>
-								<div class="flex flex-col gap-1 w-full flex-1 justify-around overflow-hidden">
-									{#each theme.slots as _}
-										<div class="w-full rounded-xs bg-zinc-700/40 border border-zinc-600/30" style="aspect-ratio: 4/3;"></div>
-									{/each}
-								</div>
-								<div class="w-full text-center pt-1 pb-0.5">
-									<div class="text-[4px] font-black tracking-wider uppercase {theme.backgroundColor === '#18181B' ? 'text-white' : 'text-zinc-900'}">
-										CHEKIYUUME
+								<!-- Background image if any -->
+								{#if theme.backgroundUrl}
+									<img src={theme.backgroundUrl} alt="Background" class="absolute inset-0 h-full w-full object-cover pointer-events-none" />
+								{/if}
+
+								<!-- Slots with exact canvas percentages -->
+								{#each theme.slots as slot}
+									<div
+										class="absolute rounded-xs bg-zinc-700/50 border border-zinc-600/40 shadow-inner"
+										style="left: {(slot.x / theme.canvasWidth) * 100}%; top: {(slot.y / theme.canvasHeight) * 100}%; width: {(slot.width / theme.canvasWidth) * 100}%; height: {(slot.height / theme.canvasHeight) * 100}%;"
+									></div>
+								{/each}
+
+								<!-- Real Custom Overlay Artwork PNG if custom frame! -->
+								{#if theme.overlayUrl}
+									<img src={theme.overlayUrl} alt="Overlay" class="absolute inset-0 h-full w-full object-contain pointer-events-none z-10" />
+								{/if}
+
+								<!-- Default Branding (only if no custom overlay) -->
+								{#if !theme.overlayUrl}
+									<div class="absolute bottom-1 inset-x-0 w-full text-center z-10">
+										<div class="text-[5px] font-black tracking-wider uppercase {theme.backgroundColor === '#18181B' ? 'text-white' : 'text-zinc-900'}">
+											CHEKIYUUME
+										</div>
 									</div>
-								</div>
+								{/if}
 							</div>
 						</div>
 
