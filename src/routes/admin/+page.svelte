@@ -951,14 +951,62 @@
 						bind:value={formSettings.cloudProvider}
 						class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
 					>
+						<option value="cloudinary">Cloudinary (Sangat Direkomendasikan - Kuota 25 GB Gratis, No CC, Unsigned Direct Upload)</option>
 						<option value="none">Mode Offline / Local Server Only (Tanpa Cloud Eksternal)</option>
-						<option value="r2">Cloudflare R2 (Rekomendasi - Bebas Biaya Egress & 30-Day Lifecycle)</option>
+						<option value="r2">Cloudflare R2 (Bebas Biaya Egress)</option>
 						<option value="s3">Amazon AWS S3 / MinIO</option>
 						<option value="supabase">Supabase Storage</option>
 					</select>
 				</div>
 
-				{#if formSettings.cloudProvider !== 'none'}
+				{#if formSettings.cloudProvider === 'cloudinary'}
+					<!-- Cloudinary Specific Settings -->
+					<div class="rounded-2xl bg-indigo-950/40 border border-indigo-500/30 p-4 text-xs text-indigo-200">
+						<p class="font-bold text-white mb-1">Cara Cepat Konfigurasi Cloudinary:</p>
+						<ol class="list-decimal ml-4 space-y-1 text-indigo-300">
+							<li>Buka <a href="https://cloudinary.com" target="_blank" class="underline text-indigo-200 hover:text-white">Cloudinary Dashboard</a> & salin <strong>Cloud Name</strong>.</li>
+							<li>Buka <em>Settings &gt; Upload presets</em> &gt; buat preset baru dengan mode <strong>Unsigned</strong>.</li>
+							<li>Salin nama preset ke kolom di bawah ini. Tanpa perlu memasukkan password/API secret!</li>
+						</ol>
+					</div>
+
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+						<div>
+							<label for="cloudinary-cloud-name" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Cloud Name</label>
+							<input
+								id="cloudinary-cloud-name"
+								type="text"
+								bind:value={formSettings.cloudinaryCloudName}
+								placeholder="contoh: dxyzk123"
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							/>
+						</div>
+
+						<div>
+							<label for="cloudinary-upload-preset" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Upload Preset (Unsigned)</label>
+							<input
+								id="cloudinary-upload-preset"
+								type="text"
+								bind:value={formSettings.cloudinaryUploadPreset}
+								placeholder="contoh: chekiyuume_preset"
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							/>
+						</div>
+					</div>
+
+					<div>
+						<label for="cloud-base-url-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Domain Public Share Base URL (Opsional)</label>
+						<input
+							id="cloud-base-url-input"
+							type="text"
+							bind:value={formSettings.cloudPublicBaseUrl}
+							placeholder="https://cheki-yuume.pages.dev (atau biarkan kosong untuk domain saat ini)"
+							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+						/>
+					</div>
+
+				{:else if formSettings.cloudProvider !== 'none'}
+					<!-- S3 / R2 / Supabase Settings -->
 					<div>
 						<label for="cloud-base-url-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Domain Public Share Base URL</label>
 						<input

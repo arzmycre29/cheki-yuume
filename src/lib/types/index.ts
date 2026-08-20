@@ -81,7 +81,9 @@ export interface KioskSettings {
 	kioskTitle: string;
 	kioskSubtitle: string;
 	eventLogoUrl?: string;
-	cloudProvider: 'r2' | 's3' | 'supabase' | 'none';
+	cloudProvider: 'cloudinary' | 'r2' | 's3' | 'supabase' | 'none';
+	cloudinaryCloudName?: string;
+	cloudinaryUploadPreset?: string;
 	cloudPublicBaseUrl: string;
 	cloudEndpoint: string;
 	cloudBucket: string;
