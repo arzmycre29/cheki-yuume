@@ -112,6 +112,28 @@ function createCustomFramesStore() {
 				return next;
 			});
 		},
+		syncFromRemote: (remoteFrames: FrameLayout[]): number => {
+			let addedCount = 0;
+			update((curr) => {
+				const existingIds = new Set(curr.map((f) => f.id));
+				const existingNames = new Set(curr.map((f) => f.name.toLowerCase()));
+
+				const newFrames: FrameLayout[] = [];
+				for (const rf of remoteFrames) {
+					if (!existingIds.has(rf.id) && !existingNames.has(rf.name.toLowerCase())) {
+						newFrames.push(rf);
+						addedCount++;
+					}
+				}
+
+				if (newFrames.length === 0) return curr;
+
+				const next = [...newFrames, ...curr];
+				persist(next);
+				return next;
+			});
+			return addedCount;
+		},
 		resetToDefault: () => {
 			if (typeof window !== 'undefined') {
 				localStorage.removeItem(FRAMES_STORAGE_KEY);
@@ -122,3 +144,4 @@ function createCustomFramesStore() {
 }
 
 export const customFramesStore = createCustomFramesStore();
+

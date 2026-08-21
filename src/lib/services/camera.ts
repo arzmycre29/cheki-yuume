@@ -1,6 +1,7 @@
 export interface VideoDeviceInfo {
 	deviceId: string;
 	label: string;
+	isUsb?: boolean;
 }
 
 export class CameraService {
@@ -28,10 +29,29 @@ export class CameraService {
 				}
 			}
 
-			return videoDevices.map((d, i) => ({
-				deviceId: d.deviceId,
-				label: d.label || `Kamera ${i + 1} (${d.deviceId.slice(0, 5)})`
-			}));
+			return videoDevices.map((d, i) => {
+				const lowerLabel = (d.label || '').toLowerCase();
+				const isUsb =
+					lowerLabel.includes('usb') ||
+					lowerLabel.includes('uvc') ||
+					lowerLabel.includes('webcam') ||
+					lowerLabel.includes('external') ||
+					lowerLabel.includes('capture') ||
+					lowerLabel.includes('cam');
+
+				let friendlyName = d.label;
+				if (!friendlyName) {
+					friendlyName = `Kamera ${i + 1} (${d.deviceId.slice(0, 5)})`;
+				} else if (isUsb && !friendlyName.toLowerCase().startsWith('usb')) {
+					friendlyName = `📹 USB / External: ${friendlyName}`;
+				}
+
+				return {
+					deviceId: d.deviceId,
+					label: friendlyName,
+					isUsb
+				};
+			});
 		} catch (err) {
 			console.error('[Camera] Failed to list devices:', err);
 			return [];
@@ -56,7 +76,7 @@ export class CameraService {
 		};
 
 		if (deviceId) {
-			videoConstraints.deviceId = { exact: deviceId };
+			videoConstraints.deviceId = { ideal: deviceId };
 		}
 
 		try {
@@ -66,12 +86,21 @@ export class CameraService {
 			});
 			return this.stream;
 		} catch (err) {
-			console.warn('[Camera] Exact constraints failed, falling back to basic camera request', err);
-			this.stream = await navigator.mediaDevices.getUserMedia({
-				video: true,
-				audio: false
-			});
-			return this.stream;
+			console.warn('[Camera] Ideal constraints failed, falling back to basic camera request', err);
+			try {
+				this.stream = await navigator.mediaDevices.getUserMedia({
+					video: deviceId ? { deviceId: { ideal: deviceId } } : true,
+					audio: false
+				});
+				return this.stream;
+			} catch (fallbackErr) {
+				console.warn('[Camera] Fallback to default device:', fallbackErr);
+				this.stream = await navigator.mediaDevices.getUserMedia({
+					video: true,
+					audio: false
+				});
+				return this.stream;
+			}
 		}
 	}
 

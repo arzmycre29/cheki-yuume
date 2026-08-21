@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import type { SessionData, KioskSettings } from '$lib/types';
+import type { SessionData, KioskSettings, FrameLayout } from '$lib/types';
 
 export async function generateQrCodeDataUrl(text: string): Promise<string> {
 	try {
@@ -18,21 +18,85 @@ export async function generateQrCodeDataUrl(text: string): Promise<string> {
 	}
 }
 
+export interface CloudinaryUploadOptions {
+	folder?: string;
+	publicId?: string;
+	fileName?: string;
+	tags?: string[];
+	context?: Record<string, string>;
+}
+
 /**
- * Uploads a single file to Cloudinary via Unsigned Upload Preset
+ * Uploads a single file to Cloudinary via Unsigned Upload Preset with explicit folder & filename
  */
 export async function uploadToCloudinary(
-	file: Blob | File,
-	resourceType: 'image' | 'video',
+	file: Blob | File | string,
+	resourceType: 'image' | 'video' | 'raw' | 'auto',
 	cloudName: string,
 	uploadPreset: string,
-	publicId?: string
+	optionsOrPublicId?: CloudinaryUploadOptions | string
 ): Promise<string> {
+	let options: CloudinaryUploadOptions = {};
+	if (typeof optionsOrPublicId === 'string') {
+		options = { publicId: optionsOrPublicId };
+	} else if (optionsOrPublicId) {
+		options = optionsOrPublicId;
+	}
+
 	const formData = new FormData();
-	formData.append('file', file);
+
+	// Explicit filename determination
+	let fileName = options.fileName;
+	if (!fileName) {
+		if (file instanceof File && file.name) {
+			fileName = file.name;
+		} else if (resourceType === 'video') {
+			fileName = 'videostrip.mp4';
+		} else if (resourceType === 'raw') {
+			fileName = 'manifest.json';
+		} else {
+			fileName = 'photostrip.png';
+		}
+	}
+
+	// Supply explicit filename to multipart body so Cloudinary does not default to "blob"
+	if (file instanceof Blob) {
+		formData.append('file', file, fileName);
+	} else {
+		formData.append('file', file);
+	}
+
 	formData.append('upload_preset', uploadPreset);
-	if (publicId) {
-		formData.append('public_id', publicId);
+
+	// Dedicated Cloudinary Folder handling (both classic folder & dynamic asset_folder)
+	if (options.folder) {
+		const cleanFolder = options.folder.replace(/^\/+|\/+$/g, '');
+		formData.append('folder', cleanFolder);
+		formData.append('asset_folder', cleanFolder);
+	}
+
+	if (options.publicId) {
+		let cleanPublicId = options.publicId;
+		if (options.folder && cleanPublicId.startsWith(options.folder)) {
+			cleanPublicId = cleanPublicId.slice(options.folder.length).replace(/^\/+/, '');
+		}
+		formData.append('public_id', cleanPublicId);
+	}
+
+	if (fileName) {
+		const nameOnly = fileName.replace(/\.[^/.]+$/, '');
+		formData.append('filename_override', nameOnly);
+	}
+
+	if (options.tags && options.tags.length > 0) {
+		formData.append('tags', options.tags.join(','));
+	}
+
+	if (options.context) {
+		const ctxStr = Object.entries(options.context)
+			.map(([k, v]) => `${k}=${v}`)
+			.join('|');
+		formData.append('context', ctxStr);
 	}
 
 	const endpoint = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
@@ -51,7 +115,7 @@ export async function uploadToCloudinary(
 }
 
 /**
- * Uploads session assets to configured Cloud Storage (Cloudflare R2 / S3 / Supabase / Cloudinary)
+ * Uploads session assets (Photostrip & Videostrip) to structured Cloudinary folders
  */
 export async function uploadSessionToCloud(
 	session: SessionData,
@@ -76,7 +140,7 @@ export async function uploadSessionToCloud(
 		let photoUrl: string | null = null;
 		let videoUrl: string | null = null;
 
-		// Format structured folder name: chekiyuume/{guestName}-{sessionId}/
+		// Format structured folder name: chekiyuume/sessions/{guestName}_{sessionId}
 		const sanitizedGuestName = session.guestName
 			? session.guestName
 					.trim()
@@ -85,9 +149,7 @@ export async function uploadSessionToCloud(
 					.replace(/_+/g, '_')
 					.slice(0, 30)
 			: 'guest';
-		const sessionFolder = `${sanitizedGuestName}-${session.sessionId}`;
-		const photoPublicId = `chekiyuume/${sessionFolder}/photostrip`;
-		const videoPublicId = `chekiyuume/${sessionFolder}/videostrip`;
+		const sessionFolder = `chekiyuume/sessions/${sanitizedGuestName}_${session.sessionId}`;
 
 		try {
 			// 1. Upload Photostrip
@@ -97,7 +159,12 @@ export async function uploadSessionToCloud(
 					'image',
 					cloudName,
 					uploadPreset,
-					photoPublicId
+					{
+						folder: sessionFolder,
+						publicId: `photostrip_${session.sessionId}`,
+						fileName: `photostrip_${session.sessionId}.png`,
+						tags: ['chekiyuume', 'session', 'photostrip', session.sessionId, sanitizedGuestName]
+					}
 				);
 			} else if (session.photostripDataUrl) {
 				const res = await fetch(session.photostripDataUrl);
@@ -107,7 +174,12 @@ export async function uploadSessionToCloud(
 					'image',
 					cloudName,
 					uploadPreset,
-					photoPublicId
+					{
+						folder: sessionFolder,
+						publicId: `photostrip_${session.sessionId}`,
+						fileName: `photostrip_${session.sessionId}.png`,
+						tags: ['chekiyuume', 'session', 'photostrip', session.sessionId, sanitizedGuestName]
+					}
 				);
 			}
 
@@ -118,7 +190,12 @@ export async function uploadSessionToCloud(
 					'video',
 					cloudName,
 					uploadPreset,
-					videoPublicId
+					{
+						folder: sessionFolder,
+						publicId: `videostrip_${session.sessionId}`,
+						fileName: `videostrip_${session.sessionId}.mp4`,
+						tags: ['chekiyuume', 'session', 'videostrip', session.sessionId, sanitizedGuestName]
+					}
 				);
 			}
 
@@ -157,11 +234,10 @@ export async function uploadSessionToCloud(
 	}
 
 	try {
-		// If cloud public base URL is set, construct the direct public share URL
+		// S3 / R2 Bucket structure
 		const basePublicUrl = settings.cloudPublicBaseUrl || window.location.origin;
 		const shareUrl = `${basePublicUrl}/share/${session.sessionId}`;
 
-		// S3 / R2 Bucket structure
 		return {
 			photoUrl: `${settings.cloudEndpoint}/${settings.cloudBucket}/${session.sessionId}/photostrip.png`,
 			videoUrl: `${settings.cloudEndpoint}/${settings.cloudBucket}/${session.sessionId}/videostrip.mp4`,
@@ -173,6 +249,172 @@ export async function uploadSessionToCloud(
 			photoUrl: null,
 			videoUrl: null,
 			shareUrl: fallbackShareUrl
+		};
+	}
+}
+
+/**
+ * Uploads a Custom Frame Overlay PNG to Cloudinary in dedicated folder chekiyuume/frames
+ */
+export async function uploadCustomFrameOverlayToCloudinary(
+	file: Blob | File,
+	frameName: string,
+	cloudName: string,
+	uploadPreset: string
+): Promise<string> {
+	const sanitizedName =
+		frameName
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9_-]/g, '_')
+			.replace(/_+/g, '_')
+			.slice(0, 30) || 'frame';
+	const uniqueId = `frame_${sanitizedName}_${Date.now()}`;
+
+	return await uploadToCloudinary(file, 'image', cloudName, uploadPreset, {
+		folder: 'chekiyuume/frames',
+		publicId: uniqueId,
+		fileName: `${uniqueId}.png`,
+		tags: ['chekiyuume', 'frame', 'custom_frame', sanitizedName]
+	});
+}
+
+/**
+ * Backs up all custom frame templates as a JSON manifest to Cloudinary
+ */
+export async function backupCustomFramesToCloudinary(
+	frames: FrameLayout[],
+	cloudName: string,
+	uploadPreset: string
+): Promise<{ success: boolean; url?: string; count: number; error?: string }> {
+	try {
+		const customOnly = frames.filter((f) => f.id.startsWith('custom-'));
+		if (customOnly.length === 0) {
+			return {
+				success: false,
+				count: 0,
+				error: 'Belum ada custom frame untuk dicadangkan.'
+			};
+		}
+
+		const manifestData = {
+			version: '1.0',
+			updatedAt: Date.now(),
+			totalCustomFrames: customOnly.length,
+			frames: customOnly
+		};
+
+		const blob = new Blob([JSON.stringify(manifestData, null, 2)], {
+			type: 'application/json'
+		});
+
+		const manifestUrl = await uploadToCloudinary(blob, 'raw', cloudName, uploadPreset, {
+			folder: 'chekiyuume',
+			publicId: 'frames_manifest.json',
+			fileName: 'frames_manifest.json',
+			tags: ['chekiyuume', 'frames_manifest', 'backup']
+		});
+
+		return {
+			success: true,
+			url: manifestUrl,
+			count: customOnly.length
+		};
+	} catch (err: any) {
+		console.error('[Frames] Failed to backup frames manifest to Cloudinary:', err);
+		return {
+			success: false,
+			count: 0,
+			error: err?.message || String(err)
+		};
+	}
+}
+
+/**
+ * Retrieves custom frame templates manifest from Cloudinary
+ */
+export async function retrieveCustomFramesFromCloudinary(
+	cloudName: string
+): Promise<{ success: boolean; frames: FrameLayout[]; count: number; error?: string }> {
+	try {
+		const cleanCloud = cloudName.trim();
+		if (!cleanCloud) {
+			throw new Error('Cloudinary Cloud Name belum diisi.');
+		}
+
+		const manifestUrl = `https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest.json?_t=${Date.now()}`;
+		const res = await fetch(manifestUrl);
+
+		if (!res.ok) {
+			if (res.status === 404) {
+				throw new Error(
+					'Belum ada manifest frame di Cloudinary (chekiyuume/frames_manifest.json). Lakukan "Backup ke Cloud" terlebih dahulu.'
+				);
+			}
+			throw new Error(`Gagal mengunduh manifest frame dari Cloudinary (HTTP ${res.status})`);
+		}
+
+		const data = await res.json();
+		if (!data || !Array.isArray(data.frames)) {
+			throw new Error('Format manifest frame di Cloudinary tidak valid.');
+		}
+
+		return {
+			success: true,
+			frames: data.frames,
+			count: data.frames.length
+		};
+	} catch (err: any) {
+		console.warn('[Frames] Retrieve from Cloudinary failed:', err);
+		return {
+			success: false,
+			frames: [],
+			count: 0,
+			error: err?.message || String(err)
+		};
+	}
+}
+
+/**
+ * Tests Cloudinary settings by attempting a 1px test upload to chekiyuume/tests
+ */
+export async function testCloudinaryConnection(
+	cloudName: string,
+	uploadPreset: string
+): Promise<{ success: boolean; message: string; testUrl?: string }> {
+	try {
+		const cleanCloud = cloudName.trim();
+		const cleanPreset = uploadPreset.trim();
+
+		if (!cleanCloud || !cleanPreset) {
+			return {
+				success: false,
+				message: 'Cloud Name dan Upload Preset wajib diisi terlebih dahulu!'
+			};
+		}
+
+		// 1x1 transparent PNG data URI
+		const testPixelBase64 =
+			'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAA=';
+		const res = await fetch(testPixelBase64);
+		const testBlob = await res.blob();
+
+		const testUrl = await uploadToCloudinary(testBlob, 'image', cleanCloud, cleanPreset, {
+			folder: 'chekiyuume/tests',
+			publicId: `test_connection_${Date.now()}`,
+			fileName: 'test_pixel.png',
+			tags: ['chekiyuume', 'test_connection']
+		});
+
+		return {
+			success: true,
+			message: 'Koneksi Cloudinary Berhasil! Folder chekiyuume/tests/ berhasil dibuat.',
+			testUrl
+		};
+	} catch (err: any) {
+		return {
+			success: false,
+			message: `Koneksi Cloudinary Gagal: ${err?.message || String(err)}`
 		};
 	}
 }

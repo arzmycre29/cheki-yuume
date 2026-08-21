@@ -15,8 +15,15 @@
 		createBatchSessionExportZip
 	} from '$lib/services/db';
 	import type { SessionData, KioskSettings, FrameLayout } from '$lib/types';
-	import { uploadToCloudinary } from '$lib/services/cloudStorage';
+	import {
+		uploadToCloudinary,
+		uploadCustomFrameOverlayToCloudinary,
+		backupCustomFramesToCloudinary,
+		retrieveCustomFramesFromCloudinary,
+		testCloudinaryConnection
+	} from '$lib/services/cloudStorage';
 	import PrintModal from '$lib/components/PrintModal.svelte';
+	import { Camera2Service, type Camera2Device } from '$lib/services/camera2Service';
 	import {
 		Shield,
 		Camera,
@@ -45,7 +52,11 @@
 		Layers,
 		AlertTriangle,
 		Usb,
-		ShieldAlert
+		ShieldAlert,
+		CloudUpload,
+		CloudDownload,
+		Link as LinkIcon,
+		Check
 	} from '@lucide/svelte';
 
 	let activeTab = $state<'general' | 'camera' | 'cloud' | 'sessions' | 'frames'>('sessions');
@@ -56,9 +67,22 @@
 	let testVideoElement: HTMLVideoElement | null = $state(null);
 	let isTestingCamera = $state(false);
 
+	// Camera2 Native diagnostics
+	let nativeCamera2Devices = $state<Camera2Device[]>([]);
+	let isScanningCamera2 = $state(false);
+	let isCapturingCamera2 = $state(false);
+	let camera2PhotoResult = $state<string | null>(null);
+	let camera2Error = $state<string | null>(null);
+
 	// UVC Test State
 	let isTestingUvc = $state(false);
 	let uvcTestResult = $state<UvcCaptureResult | null>(null);
+
+	// Cloudinary Sync & Test States
+	let isSyncingFrames = $state(false);
+	let isBackingUpFrames = $state(false);
+	let isTestingCloudinary = $state(false);
+	let cloudinaryTestResult = $state<{ success: boolean; message: string; testUrl?: string } | null>(null);
 
 	// Session logs state
 	let sessions = $state<SessionData[]>([]);
@@ -80,6 +104,8 @@
 	// Custom Frame Management state
 	let frameFilterSlot = $state<number | 'all'>('all');
 	let isAddFrameModalOpen = $state(false);
+	let frameInputMode = $state<'upload' | 'url'>('upload');
+	let frameDirectUrl = $state('');
 	let newFrameName = $state('');
 	let newFrameDesc = $state('');
 	let newFrameSlots = $state<number>(4);
@@ -154,6 +180,39 @@
 			};
 		} finally {
 			isTestingUvc = false;
+		}
+	}
+
+	async function scanNativeCamera2() {
+		isScanningCamera2 = true;
+		camera2Error = null;
+		try {
+			nativeCamera2Devices = await Camera2Service.getAvailableCameras();
+			if (nativeCamera2Devices.length === 0) {
+				camera2Error = 'Tidak ada perangkat kamera yang terdeteksi via Camera2 API atau plugin belum terdaftar di platform ini.';
+			}
+		} catch (e: any) {
+			camera2Error = e?.message || String(e);
+		} finally {
+			isScanningCamera2 = false;
+		}
+	}
+
+	async function testNativeCamera2Capture(cameraId: string) {
+		isCapturingCamera2 = true;
+		camera2Error = null;
+		camera2PhotoResult = null;
+		try {
+			const res = await Camera2Service.captureHighResPhoto(cameraId, 1920, 1080);
+			if (res.success && res.dataUrl) {
+				camera2PhotoResult = res.dataUrl;
+			} else {
+				camera2Error = 'Gagal mengambil foto dari Camera2.';
+			}
+		} catch (e: any) {
+			camera2Error = e?.message || String(e);
+		} finally {
+			isCapturingCamera2 = false;
 		}
 	}
 
@@ -296,6 +355,89 @@
 		goto('/result');
 	}
 
+	async function handleRetrieveFramesFromCloud() {
+		if (
+			formSettings.cloudProvider !== 'cloudinary' ||
+			!formSettings.cloudinaryCloudName?.trim()
+		) {
+			alert('Mohon atur dan simpan Cloudinary Cloud Name terlebih dahulu di tab Cloud 30-Day.');
+			return;
+		}
+
+		isSyncingFrames = true;
+		try {
+			const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
+			if (res.success && res.frames.length > 0) {
+				const added = customFramesStore.syncFromRemote(res.frames);
+				saveMessage = `Berhasil menyinkronkan ${res.count} frame dari Cloudinary! (${added} frame baru ditambahkan)`;
+			} else if (res.success) {
+				saveMessage = 'Sinkronisasi selesai: Tidak ada frame baru ditemukan di Cloudinary.';
+			} else {
+				alert(res.error || 'Gagal menyinkronkan frame dari Cloudinary.');
+			}
+		} catch (err: any) {
+			alert(`Gagal mengambil frame dari Cloud: ${err?.message || err}`);
+		} finally {
+			isSyncingFrames = false;
+			setTimeout(() => (saveMessage = ''), 4000);
+		}
+	}
+
+	async function handleBackupFramesToCloud() {
+		if (
+			formSettings.cloudProvider !== 'cloudinary' ||
+			!formSettings.cloudinaryCloudName?.trim() ||
+			!formSettings.cloudinaryUploadPreset?.trim()
+		) {
+			alert('Mohon lengkapi Cloud Name & Upload Preset Cloudinary di tab Cloud 30-Day terlebih dahulu.');
+			return;
+		}
+
+		const customFrames = allFrames.filter((f) => f.id.startsWith('custom-'));
+		if (customFrames.length === 0) {
+			alert('Belum ada custom frame untuk dicadangkan ke Cloudinary. Tambahkan frame kustom terlebih dahulu.');
+			return;
+		}
+
+		isBackingUpFrames = true;
+		try {
+			const res = await backupCustomFramesToCloudinary(
+				allFrames,
+				formSettings.cloudinaryCloudName,
+				formSettings.cloudinaryUploadPreset
+			);
+			if (res.success) {
+				saveMessage = `Berhasil mencadangkan ${res.count} custom frame ke Cloudinary (chekiyuume/frames_manifest.json)!`;
+			} else {
+				alert(res.error || 'Gagal mencadangkan frame ke Cloudinary.');
+			}
+		} catch (err: any) {
+			alert(`Gagal mencadangkan frame: ${err?.message || err}`);
+		} finally {
+			isBackingUpFrames = false;
+			setTimeout(() => (saveMessage = ''), 4000);
+		}
+	}
+
+	async function handleTestCloudinary() {
+		isTestingCloudinary = true;
+		cloudinaryTestResult = null;
+		try {
+			const res = await testCloudinaryConnection(
+				formSettings.cloudinaryCloudName || '',
+				formSettings.cloudinaryUploadPreset || ''
+			);
+			cloudinaryTestResult = res;
+		} catch (err: any) {
+			cloudinaryTestResult = {
+				success: false,
+				message: `Error tidak terduga: ${err?.message || err}`
+			};
+		} finally {
+			isTestingCloudinary = false;
+		}
+	}
+
 	async function handleImageUpload(e: Event) {
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files[0]) {
@@ -309,19 +451,11 @@
 				formSettings.cloudinaryUploadPreset?.trim()
 			) {
 				try {
-					const cleanName = (newFrameName || file.name.replace(/\.[^/.]+$/, ''))
-						.trim()
-						.toLowerCase()
-						.replace(/[^a-z0-9_-]/g, '_')
-						.replace(/_+/g, '_')
-						.slice(0, 30);
-					const publicId = `chekiyuume/frames/${cleanName || 'frame'}_${Date.now()}`;
-					const cloudUrl = await uploadToCloudinary(
+					const cloudUrl = await uploadCustomFrameOverlayToCloudinary(
 						file,
-						'image',
+						newFrameName || file.name.replace(/\.[^/.]+$/, ''),
 						formSettings.cloudinaryCloudName.trim(),
-						formSettings.cloudinaryUploadPreset.trim(),
-						publicId
+						formSettings.cloudinaryUploadPreset.trim()
 					);
 					newFrameOverlayUrl = cloudUrl;
 					isUploadingImage = false;
@@ -347,13 +481,18 @@
 			return;
 		}
 
+		const finalOverlay =
+			frameInputMode === 'url'
+				? frameDirectUrl.trim() || undefined
+				: newFrameOverlayUrl || undefined;
+
 		customFramesStore.addFrame({
 			name: newFrameName,
 			description: newFrameDesc,
 			mode: 'default',
 			totalSlots: newFrameSlots,
 			backgroundColor: newFrameBgColor,
-			overlayUrl: newFrameOverlayUrl || undefined
+			overlayUrl: finalOverlay
 		});
 
 		// Reset form
@@ -362,6 +501,8 @@
 		newFrameSlots = 4;
 		newFrameBgColor = '#FFFFFF';
 		newFrameOverlayUrl = '';
+		frameDirectUrl = '';
+		frameInputMode = 'upload';
 		isAddFrameModalOpen = false;
 
 		saveMessage = 'Frame baru berhasil ditambahkan!';
@@ -719,24 +860,64 @@
 		{:else if activeTab === 'frames'}
 			<!-- Tab 2: Custom Frame Management & Upload -->
 			<div class="flex flex-col gap-6 bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl">
-				<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+				<div class="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4">
 					<div>
-						<h2 class="text-lg font-bold text-white font-display">Manajemen Desain & Template Frame</h2>
-						<p class="text-xs text-zinc-400">Tambah frame kustom bertema event, atur warna latar, dan upload overlay PNG</p>
+						<h2 class="text-lg font-bold text-white font-display flex items-center gap-2">
+							<span>Manajemen Desain & Template Frame</span>
+							<span class="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-400 font-mono border border-zinc-700">
+								{allFrames.length} Total Frame
+							</span>
+						</h2>
+						<p class="text-xs text-zinc-400">Tambah frame kustom bertema event, atur warna latar, upload overlay PNG ke Cloudinary, dan sinkronkan antar-kios</p>
 					</div>
 
-					<div class="flex items-center gap-3">
+					<div class="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+						<!-- Retrieve from Cloudinary Button -->
+						<button
+							type="button"
+							onclick={handleRetrieveFramesFromCloud}
+							disabled={isSyncingFrames}
+							class="flex items-center gap-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600 border border-indigo-500/40 px-3.5 py-2 text-xs font-bold text-indigo-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
+							title="Tarik & sinkronkan daftar template frame dari Cloudinary (chekiyuume/frames_manifest.json)"
+						>
+							{#if isSyncingFrames}
+								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+								<span>Menarik dari Cloud...</span>
+							{:else}
+								<CloudDownload class="h-3.5 w-3.5" />
+								<span>Tarik dari Cloud</span>
+							{/if}
+						</button>
+
+						<!-- Backup to Cloudinary Button -->
+						<button
+							type="button"
+							onclick={handleBackupFramesToCloud}
+							disabled={isBackingUpFrames}
+							class="flex items-center gap-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600 border border-purple-500/40 px-3.5 py-2 text-xs font-bold text-purple-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
+							title="Cadangkan seluruh konfigurasi custom frame ke Cloudinary"
+						>
+							{#if isBackingUpFrames}
+								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+								<span>Mencadangkan...</span>
+							{:else}
+								<CloudUpload class="h-3.5 w-3.5" />
+								<span>Backup ke Cloud</span>
+							{/if}
+						</button>
+
 						<button
 							type="button"
 							onclick={handleResetFrames}
-							class="rounded-xl bg-zinc-800 hover:bg-zinc-700 px-4 py-2.5 text-xs font-bold text-zinc-300 border border-zinc-700 transition-all cursor-pointer"
+							class="rounded-xl bg-zinc-800 hover:bg-zinc-700 px-3.5 py-2 text-xs font-bold text-zinc-300 border border-zinc-700 transition-all cursor-pointer"
 						>
 							Reset ke Default
 						</button>
+
 						<button
 							type="button"
 							onclick={() => (isAddFrameModalOpen = true)}
-							class="flex items-center gap-2 rounded-xl bg-rose-500 hover:bg-rose-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-rose-500/20 transition-all cursor-pointer"
+							class="flex items-center gap-2 rounded-xl bg-rose-500 hover:bg-rose-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-rose-500/20 transition-all cursor-pointer"
 						>
 							<Plus class="h-4 w-4" />
 							<span>Upload Frame Baru</span>
@@ -795,9 +976,14 @@
 
 							<!-- Card Info -->
 							<div class="w-full mt-2 text-center">
-								<div class="flex items-center justify-center gap-1.5 mb-1.5">
+								<div class="flex items-center justify-center gap-1.5 mb-1.5 flex-wrap">
 									<span class="h-3 w-3 rounded-full border border-white/30" style="background-color: {frame.backgroundColor};"></span>
 									<span class="text-[10px] font-extrabold uppercase text-rose-400">{frame.totalSlots} Slot • {frame.aspectRatioLabel}</span>
+									{#if frame.overlayUrl && frame.overlayUrl.includes('cloudinary')}
+										<span class="rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 text-[9px] font-bold">
+											Cloud CDN
+										</span>
+									{/if}
 								</div>
 								<h3 class="text-sm font-bold text-white font-display truncate">
 									{frame.name}
@@ -886,9 +1072,12 @@
 							</ul>
 						</div>
 					{:else}
-						<!-- Internal Camera Config -->
+						<!-- Internal & USB Camera Config -->
 						<div>
-							<label for="camera-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Pilih Perangkat Kamera Internal</label>
+							<div class="flex items-center justify-between mb-2">
+								<label for="camera-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400">Pilih Perangkat Kamera</label>
+								<span class="text-[11px] text-emerald-400 font-bold">✨ Mendukung USB OTG & Internal</span>
+							</div>
 							<select
 								id="camera-select"
 								bind:value={formSettings.cameraDeviceId}
@@ -899,6 +1088,9 @@
 									<option value={cam.deviceId}>{cam.label}</option>
 								{/each}
 							</select>
+							<p class="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+								💡 <strong>Tips USB OTG:</strong> Sambungkan webcam/kamera USB ke port OTG HP/Tablet, lalu tekan tombol <strong>"Pindai Ulang ({cameras.length})"</strong> di pojok kanan atas. Kamera USB akan otomatis terdeteksi dengan akselerasi GPU hardware penuh.
+							</p>
 						</div>
 
 						<div>
@@ -1093,6 +1285,87 @@
 						</div>
 					{/if}
 				</div>
+
+				<!-- Native Camera2 Diagnostics Card -->
+				<div class="col-span-1 lg:col-span-2 flex flex-col bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl gap-4">
+					<div class="flex items-center justify-between">
+						<div>
+							<h3 class="text-base font-bold text-white font-display flex items-center gap-2">
+								<Shield class="h-4 w-4 text-emerald-400" />
+								<span>Diagnostik Native Android Camera2 (Driver Resmi OS)</span>
+							</h3>
+							<p class="text-xs text-zinc-400">
+								Memindai perangkat kamera via sistem Camera2 resmi Android (Depan, Belakang, & Webcam USB OTG External)
+							</p>
+						</div>
+						<button
+							type="button"
+							disabled={isScanningCamera2}
+							onclick={scanNativeCamera2}
+							class="flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-600/20 cursor-pointer transition-all active:scale-95"
+						>
+							{#if isScanningCamera2}
+								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+								<span>Memindai Camera2...</span>
+							{:else}
+								<RefreshCw class="h-3.5 w-3.5" />
+								<span>Pindai Native Camera2 ({nativeCamera2Devices.length})</span>
+							{/if}
+						</button>
+					</div>
+
+					{#if camera2Error}
+						<div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2">
+							<AlertTriangle class="h-4 w-4 shrink-0" />
+							<span>{camera2Error}</span>
+						</div>
+					{/if}
+
+					{#if nativeCamera2Devices.length > 0}
+						<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+							{#each nativeCamera2Devices as cam}
+								<div class="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 flex flex-col justify-between gap-3">
+									<div>
+										<div class="flex items-center justify-between mb-1">
+											<span class="text-xs font-bold text-white">{cam.name}</span>
+											<span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full {cam.isExternal ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' : 'bg-zinc-800 text-zinc-300'}">
+												ID: {cam.id}
+											</span>
+										</div>
+										<p class="text-[11px] text-zinc-400">
+											Facing: <strong class="text-zinc-200 capitalize">{cam.facing}</strong> • Max: <strong class="text-zinc-200">{cam.maxResolution}</strong>
+										</p>
+									</div>
+
+									<button
+										type="button"
+										disabled={isCapturingCamera2}
+										onclick={() => testNativeCamera2Capture(cam.id)}
+										class="w-full flex items-center justify-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 py-2 text-xs font-bold text-emerald-400 border border-zinc-700 transition-colors cursor-pointer"
+									>
+										{#if isCapturingCamera2}
+											<RefreshCw class="h-3 w-3 animate-spin" />
+											<span>Mengambil...</span>
+										{:else}
+											<Camera class="h-3 w-3" />
+											<span>Uji Jepret Resolusi Penuh</span>
+										{/if}
+									</button>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					{#if camera2PhotoResult}
+						<div class="p-4 rounded-2xl bg-zinc-950 border border-emerald-500/30 flex flex-col items-center gap-2">
+							<div class="flex items-center gap-2 text-emerald-400 text-xs font-bold">
+								<CheckCircle2 class="h-4 w-4" />
+								<span>Hasil Jepretan Native Camera2 Hardware Berhasil!</span>
+							</div>
+							<img src={camera2PhotoResult} alt="Camera2 Capture" class="max-h-60 rounded-xl border border-zinc-700 shadow-lg object-contain" />
+						</div>
+					{/if}
+				</div>
 			</div>
 
 		{:else if activeTab === 'general'}
@@ -1209,10 +1482,10 @@
 				{#if formSettings.cloudProvider === 'cloudinary'}
 					<!-- Cloudinary Specific Settings -->
 					<div class="rounded-2xl bg-indigo-950/40 border border-indigo-500/30 p-4 text-xs text-indigo-200">
-						<p class="font-bold text-white mb-1">Cara Cepat Konfigurasi Cloudinary:</p>
+						<p class="font-bold text-white mb-1">Panduan Pengaturan Cloudinary:</p>
 						<ol class="list-decimal ml-4 space-y-1 text-indigo-300">
 							<li>Buka <a href="https://cloudinary.com" target="_blank" class="underline text-indigo-200 hover:text-white">Cloudinary Dashboard</a> & salin <strong>Cloud Name</strong>.</li>
-							<li>Buka <em>Settings &gt; Upload presets</em> &gt; buat preset baru dengan mode <strong>Unsigned</strong>.</li>
+							<li>Buka <em>Settings &gt; Upload presets</em> &gt; buat preset baru dengan Signing Mode <strong>Unsigned</strong>.</li>
 							<li>Salin nama preset ke kolom di bawah ini. Tanpa perlu memasukkan password/API secret!</li>
 						</ol>
 					</div>
@@ -1250,6 +1523,59 @@
 							placeholder="https://cheki-yuume.pages.dev (atau biarkan kosong untuk domain saat ini)"
 							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
 						/>
+					</div>
+
+					<!-- Test Connection Button & Result -->
+					<div class="pt-2 border-t border-zinc-800 flex flex-col gap-3">
+						<div class="flex items-center justify-between">
+							<div>
+								<span class="text-xs font-bold text-white">Uji Koneksi & Pembuatan Folder</span>
+								<p class="text-[11px] text-zinc-400">Memverifikasi Cloud Name & Upload Preset dengan upload 1-pixel test</p>
+							</div>
+							<button
+								type="button"
+								onclick={handleTestCloudinary}
+								disabled={isTestingCloudinary || !formSettings.cloudinaryCloudName || !formSettings.cloudinaryUploadPreset}
+								class="flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-xs font-bold text-white shadow-md disabled:opacity-50 cursor-pointer transition-all"
+							>
+								{#if isTestingCloudinary}
+									<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+									<span>Menguji...</span>
+								{:else}
+									<Check class="h-3.5 w-3.5" />
+									<span>Uji Koneksi Cloudinary</span>
+								{/if}
+							</button>
+						</div>
+
+						{#if cloudinaryTestResult}
+							<div class="rounded-2xl p-3.5 border text-xs animate-in fade-in duration-200 {cloudinaryTestResult.success ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300' : 'bg-red-950/40 border-red-500/40 text-red-300'}">
+								<div class="flex items-start gap-2">
+									{#if cloudinaryTestResult.success}
+										<CheckCircle2 class="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+									{:else}
+										<AlertCircle class="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+									{/if}
+									<div class="flex-1">
+										<p class="font-bold">{cloudinaryTestResult.message}</p>
+										{#if cloudinaryTestResult.testUrl}
+											<a href={cloudinaryTestResult.testUrl} target="_blank" class="text-[11px] underline text-emerald-200 hover:text-white mt-1 inline-block">
+												Lihat aset test di Cloudinary ↗
+											</a>
+										{/if}
+									</div>
+								</div>
+							</div>
+						{/if}
+					</div>
+
+					<!-- Structure Info Box -->
+					<div class="rounded-2xl bg-zinc-950/60 border border-zinc-800/80 p-4 text-[11px] text-zinc-400 space-y-1.5 font-mono">
+						<div class="text-xs font-bold text-zinc-300 font-sans mb-1">📁 Struktur Folder Cloudinary Otomatis:</div>
+						<p>• <strong>chekiyuume/sessions/{`{guest}_{sessionId}`}/photostrip.png</strong> (Foto strip)</p>
+						<p>• <strong>chekiyuume/sessions/{`{guest}_{sessionId}`}/videostrip.mp4</strong> (Video BTS strip)</p>
+						<p>• <strong>chekiyuume/frames/</strong> (Template frame overlay PNG)</p>
+						<p>• <strong>chekiyuume/frames_manifest.json</strong> (Backup konfigurasi frame)</p>
 					</div>
 
 				{:else if formSettings.cloudProvider !== 'none'}
@@ -1422,29 +1748,88 @@
 						</div>
 					</div>
 
-					<!-- Image Overlay Upload -->
+					<!-- Image Overlay Input Mode Tabs -->
 					<div>
-						<div class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Gambar Overlay / Frame Artwork (Opsional PNG)</div>
-						<label class="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-zinc-700 hover:border-rose-500/60 bg-zinc-800/40 p-5 text-center cursor-pointer transition-all">
-							{#if newFrameOverlayUrl}
-								<div class="relative max-h-32 mb-2">
-									<img src={newFrameOverlayUrl} alt="Preview Frame" class="max-h-32 rounded-lg object-contain shadow-md" />
-									<button
-										type="button"
-										onclick={(e) => { e.preventDefault(); newFrameOverlayUrl = ''; }}
-										class="absolute -top-2 -right-2 rounded-full bg-red-500 text-white p-1 shadow-md"
-									>
-										<X class="h-3 w-3" />
-									</button>
+						<div class="flex items-center justify-between mb-2">
+							<span class="text-xs font-bold uppercase tracking-wider text-zinc-400">Gambar Overlay / Frame Artwork</span>
+							<div class="flex items-center gap-1 bg-zinc-800 p-1 rounded-xl border border-zinc-700/60">
+								<button
+									type="button"
+									onclick={() => (frameInputMode = 'upload')}
+									class="px-2.5 py-1 text-[10px] font-bold rounded-lg transition-colors cursor-pointer {frameInputMode === 'upload' ? 'bg-rose-500 text-white shadow-xs' : 'text-zinc-400 hover:text-white'}"
+								>
+									Upload File
+								</button>
+								<button
+									type="button"
+									onclick={() => (frameInputMode = 'url')}
+									class="px-2.5 py-1 text-[10px] font-bold rounded-lg transition-colors cursor-pointer {frameInputMode === 'url' ? 'bg-rose-500 text-white shadow-xs' : 'text-zinc-400 hover:text-white'}"
+								>
+									Tautan / URL
+								</button>
+							</div>
+						</div>
+
+						{#if frameInputMode === 'upload'}
+							<label class="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-zinc-700 hover:border-rose-500/60 bg-zinc-800/40 p-5 text-center cursor-pointer transition-all">
+								{#if isUploadingImage}
+									<div class="flex flex-col items-center gap-2 py-4">
+										<RefreshCw class="h-8 w-8 text-rose-500 animate-spin" />
+										<span class="text-xs font-bold text-zinc-300">Mengunggah ke Cloudinary (chekiyuume/frames)...</span>
+									</div>
+								{:else if newFrameOverlayUrl}
+									<div class="relative max-h-32 mb-2">
+										<img src={newFrameOverlayUrl} alt="Preview Frame" class="max-h-32 rounded-lg object-contain shadow-md" />
+										<button
+											type="button"
+											onclick={(e) => { e.preventDefault(); newFrameOverlayUrl = ''; }}
+											class="absolute -top-2 -right-2 rounded-full bg-red-500 text-white p-1 shadow-md cursor-pointer"
+										>
+											<X class="h-3 w-3" />
+										</button>
+									</div>
+									<div class="flex items-center gap-1.5 text-[11px] text-emerald-400 font-bold">
+										<CheckCircle2 class="h-3.5 w-3.5" />
+										<span>Overlay siap dipasang ({newFrameOverlayUrl.includes('cloudinary') ? 'Cloudinary Hosted' : 'Lokal'})</span>
+									</div>
+								{:else}
+									<Upload class="h-7 w-7 text-zinc-500 mb-2" />
+									<span class="text-xs font-bold text-zinc-300">Pilih berkas gambar (PNG transparan disarankan)</span>
+									<span class="text-[10px] text-zinc-500 mt-1">Lebar 1080px (akan otomatis diupload ke Cloudinary jika aktif)</span>
+								{/if}
+								<input type="file" accept="image/png,image/jpeg,image/webp" class="hidden" onchange={handleImageUpload} />
+							</label>
+						{:else}
+							<div class="flex flex-col gap-2 bg-zinc-800/40 border border-zinc-700/60 rounded-2xl p-4">
+								<label for="direct-url-input" class="text-[11px] text-zinc-400 font-medium">
+									Masukkan URL gambar Cloudinary atau CDN publik:
+								</label>
+								<div class="flex items-center gap-2">
+									<input
+										id="direct-url-input"
+										type="url"
+										bind:value={frameDirectUrl}
+										placeholder="https://res.cloudinary.com/.../image/upload/.../frame.png"
+										class="w-full rounded-xl bg-zinc-800 border border-zinc-700 py-2 px-3 text-xs text-white focus:border-rose-500 focus:outline-hidden font-mono"
+									/>
+									{#if frameDirectUrl}
+										<button
+											type="button"
+											onclick={() => (frameDirectUrl = '')}
+											class="p-2 rounded-xl bg-zinc-700 hover:bg-zinc-600 text-zinc-300 hover:text-white"
+										>
+											<X class="h-3.5 w-3.5" />
+										</button>
+									{/if}
 								</div>
-								<span class="text-[11px] text-emerald-400 font-bold">✓ Gambar frame siap dipasang</span>
-							{:else}
-								<Upload class="h-7 w-7 text-zinc-500 mb-2" />
-								<span class="text-xs font-bold text-zinc-300">Pilih berkas gambar (PNG transparan disarankan)</span>
-								<span class="text-[10px] text-zinc-500 mt-1">Lebar 1080px (sesuai spesifikasi strip)</span>
-							{/if}
-							<input type="file" accept="image/png,image/jpeg,image/webp" class="hidden" onchange={handleImageUpload} />
-						</label>
+								{#if frameDirectUrl}
+									<div class="flex items-center gap-3 mt-2">
+										<img src={frameDirectUrl} alt="Preview direct URL" class="h-16 w-auto rounded-lg border border-zinc-700 shadow-md object-contain bg-zinc-900" />
+										<span class="text-[10px] text-emerald-400 font-bold">✓ Pratinjau URL berhasil dimuat</span>
+									</div>
+								{/if}
+							</div>
+						{/if}
 					</div>
 				</div>
 
