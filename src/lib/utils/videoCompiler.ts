@@ -40,12 +40,16 @@ function createVideoElement(url: string): Promise<HTMLVideoElement> {
 		video.muted = true;
 		video.playsInline = true;
 		video.preload = 'auto';
-		// Do NOT set loop=true — we will seek manually
+		video.loop = true;
 
 		let done = false;
 		const finish = () => {
-			if (!done) { done = true; resolve(video); }
+			if (!done) {
+				done = true;
+				resolve(video);
+			}
 		};
+
 		video.oncanplaythrough = finish;
 		video.onloadeddata = finish;
 		video.onerror = finish;
@@ -54,34 +58,13 @@ function createVideoElement(url: string): Promise<HTMLVideoElement> {
 	});
 }
 
-/**
- * Seek a video element to a precise timestamp and wait for the frame to decode.
- */
-function seekVideoTo(video: HTMLVideoElement, time: number): Promise<void> {
-	return new Promise((resolve) => {
-		const clampedTime = Math.max(0, isFinite(video.duration) && video.duration > 0
-			? Math.min(time, video.duration - 0.001)
-			: time);
-
-		// Already close enough (within one frame at 30fps)
-		if (Math.abs(video.currentTime - clampedTime) < 0.034) {
-			resolve();
-			return;
-		}
-
-		let settled = false;
-		const finish = () => {
-			if (!settled) { settled = true; resolve(); }
-		};
-		video.addEventListener('seeked', finish, { once: true });
-		setTimeout(finish, 300); // safety fallback
-		video.currentTime = clampedTime;
-	});
-}
-
 function drawRoundedRect(
 	ctx: CanvasRenderingContext2D,
-	x: number, y: number, width: number, height: number, radius: number
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+	radius: number
 ) {
 	ctx.beginPath();
 	ctx.moveTo(x + radius, y);
@@ -139,7 +122,6 @@ function isWebCodecsSupported(): boolean {
 
 interface DrawFrameOpts {
 	ctx: CanvasRenderingContext2D;
-	elapsed: number;
 	origWidth: number;
 	origHeight: number;
 	scaleFactor: number;
@@ -147,12 +129,8 @@ interface DrawFrameOpts {
 	canvasHeight: number;
 	layout: FrameLayout;
 	numSlots: number;
-	activeSlots: number[];
-	segmentDuration: number;
-	singlePassDuration: number;
 	preloadedImages: Map<number, HTMLImageElement>;
 	preloadedVideos: Map<number, HTMLVideoElement>;
-	activeSlotIndex: number; // current slot being animated (already resolved)
 	activeSlot: number;
 	overlayImg: HTMLImageElement | null;
 	bgImg: HTMLImageElement | null;
@@ -165,11 +143,24 @@ interface DrawFrameOpts {
 
 function drawCompositeFrame(opts: DrawFrameOpts) {
 	const {
-		ctx, elapsed, origWidth, origHeight, scaleFactor, canvasWidth, canvasHeight,
-		layout, numSlots, activeSlot,
-		preloadedImages, preloadedVideos,
-		overlayImg, bgImg, stickers, isMirrored,
-		brandingTitle, brandingSubtitle, guestName
+		ctx,
+		origWidth,
+		origHeight,
+		scaleFactor,
+		canvasWidth,
+		canvasHeight,
+		layout,
+		numSlots,
+		activeSlot,
+		preloadedImages,
+		preloadedVideos,
+		overlayImg,
+		bgImg,
+		stickers,
+		isMirrored,
+		brandingTitle,
+		brandingSubtitle,
+		guestName
 	} = opts;
 
 	ctx.save();
@@ -185,9 +176,10 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 	// Slots
 	for (let i = 0; i < numSlots; i++) {
 		const slot = layout.slots[i];
+		if (!slot) continue;
+
 		if (i === activeSlot) {
 			const video = preloadedVideos.get(i);
-			// Use video if loaded, otherwise fallback to still image
 			if (video && video.readyState >= 2 && video.videoWidth > 0) {
 				drawToSlot(ctx, video, slot, isMirrored);
 			} else {
@@ -217,22 +209,20 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 
 	// Branding footer (custom frames only)
 	if (!layout.id.startsWith('default-') && !overlayImg) {
-		const isDarkBg = ['#18181b', '#000000'].includes(layout.backgroundColor.toLowerCase());
+		const isDarkBg = ['#18181b', '#000000'].includes((layout.backgroundColor || '').toLowerCase());
 		const textColor = isDarkBg ? '#F4F4F5' : '#18181B';
 		const subTextColor = isDarkBg ? '#A1A1AA' : '#71717A';
-		const footerTop = layout.canvasHeight - layout.footerHeight;
+		const footerTop = layout.canvasHeight - (layout.footerHeight || 270);
 		const cx = layout.canvasWidth / 2;
 
 		ctx.save();
 		ctx.fillStyle = textColor;
 		ctx.font = '800 48px "Outfit", sans-serif';
 		ctx.textAlign = 'center';
-		ctx.letterSpacing = '4px';
 		ctx.fillText(brandingTitle.toUpperCase(), cx, footerTop + 90);
 
 		ctx.fillStyle = subTextColor;
 		ctx.font = '600 24px "Plus Jakarta Sans", sans-serif';
-		ctx.letterSpacing = '2px';
 		const sub = guestName
 			? `${guestName.toUpperCase()} • ${brandingSubtitle.toUpperCase()}`
 			: brandingSubtitle.toUpperCase();
@@ -244,7 +234,7 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main export
+// Main export: Real-Time Playback Engine (ChekiYuu Architecture)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function compileSequentialVideostrip(
@@ -256,7 +246,6 @@ export async function compileSequentialVideostrip(
 		slotPhotoIds,
 		stickers = [],
 		guestName = '',
-		sessionId = '',
 		brandingTitle = 'CHEKIYUUME',
 		brandingSubtitle = 'PHOTOBOOTH STUDIO',
 		fps = 24,
@@ -305,31 +294,22 @@ export async function compileSequentialVideostrip(
 	// Preload overlay / background
 	let overlayImg: HTMLImageElement | null = null;
 	if (layout.overlayUrl) {
-		try { overlayImg = await loadImage(layout.overlayUrl); } catch (_) {}
+		try {
+			overlayImg = await loadImage(layout.overlayUrl);
+		} catch (_) {}
 	}
 	let bgImg: HTMLImageElement | null = null;
 	if (layout.backgroundUrl) {
-		try { bgImg = await loadImage(layout.backgroundUrl); } catch (_) {}
+		try {
+			bgImg = await loadImage(layout.backgroundUrl);
+		} catch (_) {}
 	}
 
-	// Timing
-	const segmentDuration = (countdownSeconds && Number.isFinite(countdownSeconds) && countdownSeconds > 0)
-		? countdownSeconds
-		: 3.0;
-
-	// Compute playback rates for BTS videos
-	preloadedVideos.forEach((vid) => {
-		if (Number.isFinite(vid.duration) && vid.duration > 0 && segmentDuration > 0) {
-			const rate = vid.duration / segmentDuration;
-			if (Number.isFinite(rate) && rate > 0.1 && rate < 16) {
-				vid.playbackRate = rate;
-			} else {
-				vid.playbackRate = 1.0;
-			}
-		} else {
-			vid.playbackRate = 1.0;
-		}
-	});
+	// Timing calculation
+	const segmentDuration =
+		countdownSeconds && Number.isFinite(countdownSeconds) && countdownSeconds > 0
+			? countdownSeconds
+			: 3.0;
 
 	let loopCount = 1;
 	if (activeSlots.length === 1) loopCount = 3;
@@ -337,21 +317,22 @@ export async function compileSequentialVideostrip(
 
 	const singlePassDuration = segmentDuration * activeSlots.length;
 	const totalDuration = singlePassDuration * loopCount;
-	const frameIntervalMs = 1000 / fps;
-	const totalFrames = Math.ceil(totalDuration * fps);
 
-	// Canvas dimensions (cap at 1280px, ensure even integers)
-	const origWidth = layout.canvasWidth;
-	const origHeight = layout.canvasHeight;
-	let evenWidth = origWidth % 2 === 0 ? origWidth : origWidth - 1;
-	let evenHeight = origHeight % 2 === 0 ? origHeight : origHeight - 1;
-	const MAX_DIMENSION = 1280;
+	// Dimensions: Guarantee even integers and bound max resolution for mobile GPU stability
+	const origWidth = layout.canvasWidth || 1080;
+	const origHeight = layout.canvasHeight || 3456;
+	const evenOrigWidth = origWidth % 2 === 0 ? origWidth : origWidth - 1;
+	const evenOrigHeight = origHeight % 2 === 0 ? origHeight : origHeight - 1;
+
+	// Scale down for video encoding stability (1080p max height for mobile compatibility)
+	const MAX_DIMENSION = 1080;
 	let scaleFactor = 1;
-	if (evenWidth > MAX_DIMENSION || evenHeight > MAX_DIMENSION) {
-		scaleFactor = Math.min(MAX_DIMENSION / evenWidth, MAX_DIMENSION / evenHeight);
+	if (evenOrigWidth > MAX_DIMENSION || evenOrigHeight > MAX_DIMENSION) {
+		scaleFactor = Math.min(MAX_DIMENSION / evenOrigWidth, MAX_DIMENSION / evenOrigHeight);
 	}
-	let canvasWidth = Math.round(evenWidth * scaleFactor);
-	let canvasHeight = Math.round(evenHeight * scaleFactor);
+
+	let canvasWidth = Math.round(evenOrigWidth * scaleFactor);
+	let canvasHeight = Math.round(evenOrigHeight * scaleFactor);
 	if (canvasWidth % 2 !== 0) canvasWidth--;
 	if (canvasHeight % 2 !== 0) canvasHeight--;
 
@@ -361,55 +342,59 @@ export async function compileSequentialVideostrip(
 	const ctx = canvas.getContext('2d', { alpha: false });
 	if (!ctx) throw new Error('Canvas 2D context creation failed');
 
-	const baseDrawOpts = {
-		ctx, origWidth, origHeight, scaleFactor, canvasWidth, canvasHeight,
-		layout, numSlots, activeSlots, segmentDuration, singlePassDuration,
-		preloadedImages, preloadedVideos,
-		overlayImg, bgImg, stickers, isMirrored,
-		brandingTitle, brandingSubtitle, guestName
+	const baseDrawOpts: Omit<DrawFrameOpts, 'activeSlot'> = {
+		ctx,
+		origWidth: evenOrigWidth,
+		origHeight: evenOrigHeight,
+		scaleFactor,
+		canvasWidth,
+		canvasHeight,
+		layout,
+		numSlots,
+		preloadedImages,
+		preloadedVideos,
+		overlayImg,
+		bgImg,
+		stickers,
+		isMirrored,
+		brandingTitle,
+		brandingSubtitle,
+		guestName
 	};
 
-	/**
-	 * Determine which slot is active and seek its BTS video to the correct position.
-	 * Returns { activeSlotIndex, activeSlot }.
-	 */
-	async function prepareFrame(elapsed: number): Promise<{ activeSlotIndex: number; activeSlot: number }> {
-		const elapsedInPass = elapsed % singlePassDuration;
-		const activeSlotIndex = Math.min(
-			Math.floor(elapsedInPass / segmentDuration),
-			activeSlots.length - 1
-		);
-		const activeSlot = activeSlots[activeSlotIndex];
-
-		const vid = preloadedVideos.get(activeSlot);
-		if (vid) {
-			// Compute exact position within this segment in the video's own time
-			const elapsedInSegment = elapsedInPass - activeSlotIndex * segmentDuration;
-			const targetTime = elapsedInSegment * (vid.playbackRate || 1);
-			await seekVideoTo(vid, targetTime);
-		}
-
-		return { activeSlotIndex, activeSlot };
-	}
+	// Start all videos upfront
+	preloadedVideos.forEach((vid) => {
+		vid.currentTime = 0;
+		vid.play().catch(() => {});
+	});
+	await new Promise((r) => setTimeout(r, 100));
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// WebCodecs path
+	// WebCodecs Real-Time Render Pipeline
 	// ─────────────────────────────────────────────────────────────────────────
 	if (isWebCodecsSupported()) {
 		try {
 			const AVC_LEVELS = [
-				'avc1.640028', // High 4.0
-				'avc1.4d0028', // Main 4.0
-				'avc1.42001f', // Baseline 3.1
+				{ codec: 'avc1.640033', label: '5.1 High' },
+				{ codec: 'avc1.640028', label: '4.0 High' },
+				{ codec: 'avc1.4d002a', label: '4.2 Main' },
+				{ codec: 'avc1.42001f', label: '3.1 Baseline' }
 			];
-			let chosenCodec = AVC_LEVELS[0];
-			for (const codec of AVC_LEVELS) {
+
+			let chosenCodec = AVC_LEVELS[1].codec; // default to 4.0 High
+			for (const level of AVC_LEVELS) {
 				try {
-					const support = await VideoEncoder.isConfigSupported({
-						codec, width: canvasWidth, height: canvasHeight,
-						bitrate: 4_000_000, framerate: fps
+					const isSupported = await VideoEncoder.isConfigSupported({
+						codec: level.codec,
+						width: canvasWidth,
+						height: canvasHeight,
+						bitrate: 3_500_000,
+						framerate: fps
 					});
-					if (support.supported) { chosenCodec = codec; break; }
+					if (isSupported.supported) {
+						chosenCodec = level.codec;
+						break;
+					}
 				} catch (_) {}
 			}
 
@@ -421,119 +406,199 @@ export async function compileSequentialVideostrip(
 				firstTimestampBehavior: 'offset'
 			});
 
-			let encoderError: Error | null = null;
+			let encoderFailed = false;
+			let encoderErrorMessage = '';
 			const encoder = new VideoEncoder({
 				output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-				error: (e) => { encoderError = e; }
+				error: (e) => {
+					console.error('[VideoCompiler] VideoEncoder error:', e);
+					encoderFailed = true;
+					encoderErrorMessage = String(e);
+				}
 			});
 
 			encoder.configure({
 				codec: chosenCodec,
 				width: canvasWidth,
 				height: canvasHeight,
-				bitrate: 4_000_000,
+				bitrate: 3_500_000,
 				framerate: fps
 			});
 
-			// Encode all frames sequentially, seeking BTS video to the correct position each frame
-			for (let f = 0; f < totalFrames; f++) {
-				if (encoderError) throw encoderError;
+			return await new Promise<{ blob: Blob; url: string }>((resolve, reject) => {
+				const startTime = performance.now();
+				let prevActiveIndex = -1;
+				let frameCount = 0;
+				const frameInterval = 1000 / fps;
+				let lastFrameTime = 0;
 
-				const elapsedMs = f * frameIntervalMs;
-				const elapsed = elapsedMs / 1000;
+				function drawFrame() {
+					try {
+						if (encoderFailed) {
+							preloadedVideos.forEach((v) => v.pause());
+							try {
+								encoder.close();
+							} catch (_) {}
+							reject(new Error(`VideoEncoder failed: ${encoderErrorMessage}`));
+							return;
+						}
 
-				const { activeSlotIndex, activeSlot } = await prepareFrame(elapsed);
+						const nowMs = performance.now() - startTime;
+						const elapsed = nowMs / 1000;
 
-				drawCompositeFrame({ ...baseDrawOpts, elapsed, activeSlotIndex, activeSlot });
+						// Throttle to target FPS
+						if (nowMs - lastFrameTime < frameInterval * 0.85) {
+							if (elapsed < totalDuration) {
+								requestAnimationFrame(drawFrame);
+							} else {
+								finishEncoding();
+							}
+							return;
+						}
+						lastFrameTime = nowMs;
 
-				try {
-					const timestampMicros = Math.round(elapsedMs * 1000);
-					const frame = new VideoFrame(canvas, { timestamp: timestampMicros });
-					encoder.encode(frame, { keyFrame: f % (fps * 2) === 0 });
-					frame.close();
-				} catch (e) {
-					console.warn('[VideoCompiler] Frame encode error:', e);
+						const elapsedInPass = elapsed % singlePassDuration;
+						const currentActiveIndex = Math.min(
+							Math.floor(elapsedInPass / segmentDuration),
+							activeSlots.length - 1
+						);
+						const activeSlot = activeSlots[currentActiveIndex];
+
+						// Reset video time when segment changes
+						if (currentActiveIndex !== prevActiveIndex) {
+							const vid = preloadedVideos.get(activeSlot);
+							if (vid) {
+								vid.currentTime = 0;
+							}
+							prevActiveIndex = currentActiveIndex;
+						}
+
+						// Draw the composite photostrip
+						drawCompositeFrame({ ...baseDrawOpts, activeSlot });
+
+						// Encode frame
+						try {
+							const timestampMicros = Math.round(elapsed * 1_000_000);
+							const frame = new VideoFrame(canvas, { timestamp: timestampMicros });
+							const isKeyFrame = frameCount % (fps * 2) === 0;
+							encoder.encode(frame, { keyFrame: isKeyFrame });
+							frame.close();
+							frameCount++;
+						} catch (e) {
+							console.warn('[VideoCompiler] Frame encode warning:', e);
+						}
+
+						if (onProgress) {
+							onProgress(Math.min(97, Math.round((elapsed / totalDuration) * 100)));
+						}
+
+						if (elapsed < totalDuration) {
+							requestAnimationFrame(drawFrame);
+						} else {
+							finishEncoding();
+						}
+					} catch (loopErr) {
+						preloadedVideos.forEach((v) => v.pause());
+						reject(loopErr);
+					}
 				}
 
-				if (onProgress) {
-					onProgress(Math.min(97, Math.round(((f + 1) / totalFrames) * 100)));
+				function finishEncoding() {
+					preloadedVideos.forEach((v) => v.pause());
+
+					encoder
+						.flush()
+						.then(() => {
+							encoder.close();
+							muxer.finalize();
+
+							if (onProgress) onProgress(100);
+							const blob = new Blob([target.buffer], { type: 'video/mp4' });
+							const url = URL.createObjectURL(blob);
+							resolve({ blob, url });
+						})
+						.catch((err) => {
+							reject(err);
+						});
 				}
 
-				// Yield to browser every 8 frames to prevent UI lockup and allow Android WebView to breathe
-				if (f % 8 === 0) {
-					await new Promise((r) => setTimeout(r, 0));
-				}
-			}
-
-			await encoder.flush();
-			encoder.close();
-			muxer.finalize();
-
-			if (onProgress) onProgress(100);
-
-			const blob = new Blob([target.buffer], { type: 'video/mp4' });
-			const url = URL.createObjectURL(blob);
-			return { blob, url };
-		} catch (err) {
-			console.warn('[VideoCompiler] WebCodecs path failed, falling back to MediaRecorder:', err);
+				requestAnimationFrame(drawFrame);
+			});
+		} catch (webCodecsErr) {
+			console.warn('[VideoCompiler] WebCodecs pipeline failed, switching to MediaRecorder fallback:', webCodecsErr);
 		}
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// Fallback: MediaRecorder with explicit frame capture via requestFrame()
+	// Fallback: Real-time MediaRecorder Stream (Universal Mobile/Safari fallback)
 	// ─────────────────────────────────────────────────────────────────────────
 	return new Promise((resolve, reject) => {
-		// captureStream(0) = we control exactly when frames are captured
-		const stream = canvas.captureStream(0);
-		const videoTrack = stream.getVideoTracks()[0];
+		const stream = canvas.captureStream(fps);
+		const mimeType = MediaRecorder.isTypeSupported('video/mp4')
+			? 'video/mp4'
+			: MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+				? 'video/webm;codecs=vp9'
+				: 'video/webm';
 
-		const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-			? 'video/webm;codecs=vp9'
-			: 'video/webm';
-		const recorder = new MediaRecorder(stream, { mimeType });
+		const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 3_000_000 });
 		const chunks: Blob[] = [];
 
 		recorder.ondataavailable = (e) => {
 			if (e.data && e.data.size > 0) chunks.push(e.data);
 		};
+
 		recorder.onstop = () => {
-			if (chunks.length === 0) { reject(new Error('MediaRecorder: no chunks')); return; }
-			const blob = new Blob(chunks, { type: 'video/webm' });
+			preloadedVideos.forEach((v) => v.pause());
+			if (chunks.length === 0) {
+				reject(new Error('MediaRecorder: no chunks produced'));
+				return;
+			}
+			const blob = new Blob(chunks, { type: mimeType });
+			if (onProgress) onProgress(100);
 			resolve({ blob, url: URL.createObjectURL(blob) });
 		};
-		recorder.onerror = (e) => reject(e);
+
+		recorder.onerror = (e) => {
+			preloadedVideos.forEach((v) => v.pause());
+			reject(e);
+		};
+
 		recorder.start();
 
-		(async () => {
-			try {
-				for (let f = 0; f < totalFrames; f++) {
-					const elapsedMs = f * frameIntervalMs;
-					const elapsed = elapsedMs / 1000;
+		const startTime = performance.now();
+		let prevActiveIndex = -1;
 
-					const { activeSlotIndex, activeSlot } = await prepareFrame(elapsed);
-					drawCompositeFrame({ ...baseDrawOpts, elapsed, activeSlotIndex, activeSlot });
+		function renderFallbackLoop() {
+			const elapsed = (performance.now() - startTime) / 1000;
+			const elapsedInPass = elapsed % singlePassDuration;
+			const currentActiveIndex = Math.min(
+				Math.floor(elapsedInPass / segmentDuration),
+				activeSlots.length - 1
+			);
+			const activeSlot = activeSlots[currentActiveIndex];
 
-					// Explicitly capture this canvas frame into the MediaRecorder stream
-					if (videoTrack && typeof (videoTrack as MediaStreamTrack & { requestFrame?: () => void }).requestFrame === 'function') {
-						(videoTrack as MediaStreamTrack & { requestFrame: () => void }).requestFrame();
-					}
-
-					if (onProgress) {
-						onProgress(Math.min(97, Math.round(((f + 1) / totalFrames) * 100)));
-					}
-
-					// Yield every 8 frames
-					if (f % 8 === 0) {
-						await new Promise((r) => setTimeout(r, 0));
-					}
-				}
-
-				if (onProgress) onProgress(100);
-				await new Promise((r) => setTimeout(r, 200));
-				try { recorder.stop(); } catch (_) {}
-			} catch (err) {
-				reject(err);
+			if (currentActiveIndex !== prevActiveIndex) {
+				const vid = preloadedVideos.get(activeSlot);
+				if (vid) vid.currentTime = 0;
+				prevActiveIndex = currentActiveIndex;
 			}
-		})();
+
+			drawCompositeFrame({ ...baseDrawOpts, activeSlot });
+
+			if (onProgress) {
+				onProgress(Math.min(97, Math.round((elapsed / totalDuration) * 100)));
+			}
+
+			if (elapsed < totalDuration) {
+				requestAnimationFrame(renderFallbackLoop);
+			} else {
+				try {
+					recorder.stop();
+				} catch (_) {}
+			}
+		}
+
+		requestAnimationFrame(renderFallbackLoop);
 	});
 }
+

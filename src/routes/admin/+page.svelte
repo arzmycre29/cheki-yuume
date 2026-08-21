@@ -150,7 +150,7 @@
 								layoutId: cs.layoutId || '4-cut-classic-white',
 								photostripDataUrl: cs.photoUrl || '',
 								videostripUrl: cs.videoUrl,
-								shareUrl: cs.shareUrl,
+								cloudShareUrl: cs.shareUrl,
 								createdAt: cs.createdAt,
 								photos: []
 							});
@@ -425,7 +425,7 @@
 							layoutId: cs.layoutId || '4-cut-classic-white',
 							photostripDataUrl: cs.photoUrl || '',
 							videostripUrl: cs.videoUrl,
-							shareUrl: cs.shareUrl,
+							cloudShareUrl: cs.shareUrl,
 							createdAt: cs.createdAt,
 							photos: []
 						});
