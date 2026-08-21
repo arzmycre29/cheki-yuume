@@ -1,6 +1,9 @@
 <script lang="ts">
 	import type { FrameLayout, PhotoItem } from '$lib/types';
 	import { CheckCircle2, Image as ImageIcon } from '@lucide/svelte';
+	import { cameraService } from '$lib/services/camera';
+	import { settingsStore } from '$lib/stores/settings';
+	import { onMount, onDestroy } from 'svelte';
 
 	interface Props {
 		mode: 'default' | 'creative';
@@ -12,6 +15,40 @@
 	}
 
 	let { mode, layout, photos, totalPoses, currentPoseIndex, onSlotClick }: Props = $props();
+
+	let isMirrored = $derived($settingsStore.isMirrored);
+	let activeVideoEl: HTMLVideoElement | null = $state(null);
+	let liveStream = $state<MediaStream | null>(null);
+	let streamCheckTimer: any = null;
+
+	onMount(() => {
+		const syncStream = () => {
+			const s = cameraService.getStream();
+			if (s && s.active) {
+				if (liveStream !== s) {
+					liveStream = s;
+				}
+				if (activeVideoEl && activeVideoEl.srcObject !== s) {
+					activeVideoEl.srcObject = s;
+					activeVideoEl.play().catch(() => {});
+				}
+			}
+		};
+
+		syncStream();
+		streamCheckTimer = setInterval(syncStream, 600);
+	});
+
+	onDestroy(() => {
+		if (streamCheckTimer) clearInterval(streamCheckTimer);
+	});
+
+	$effect(() => {
+		if (activeVideoEl && liveStream && activeVideoEl.srcObject !== liveStream) {
+			activeVideoEl.srcObject = liveStream;
+			activeVideoEl.play().catch(() => {});
+		}
+	});
 </script>
 
 <div class="flex w-full items-center justify-center select-none">
@@ -48,6 +85,15 @@
 						<div class="absolute bottom-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-emerald-400 z-10 pointer-events-none">
 							<CheckCircle2 class="h-2.5 w-2.5" />
 						</div>
+					{:else if isCurrent && liveStream}
+						<!-- Active slot — Live Mirror Camera Feed (ChekiYuu Spec) -->
+						<video
+							bind:this={activeVideoEl}
+							autoplay
+							playsinline
+							muted
+							class="h-full w-full object-cover pointer-events-none {isMirrored ? '-scale-x-100' : ''}"
+						></video>
 					{:else}
 						<!-- Empty slot — minimal clean placeholder -->
 						<div class="flex h-full w-full flex-col items-center justify-center opacity-30 pointer-events-none">
