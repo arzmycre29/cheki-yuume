@@ -1115,8 +1115,9 @@
 								<span class="text-[11px] text-emerald-400 font-bold">✨ Mendukung USB OTG & Internal</span>
 							</div>
 							<select
-								id="camera-select"
+								id="camera-device-select"
 								bind:value={formSettings.cameraDeviceId}
+								onchange={() => { if (isTestingCamera) startCameraTest(); }}
 								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
 							>
 								<option value="">Default OS / Browser Camera</option>

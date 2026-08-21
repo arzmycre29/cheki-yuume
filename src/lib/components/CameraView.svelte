@@ -1,12 +1,12 @@
 <script lang="ts">
-	import type { CameraDiagnosticReport } from '$lib/services/camera';
+	import type { CameraDiagnosticReport, VideoDeviceInfo } from '$lib/services/camera';
 	import { onMount, onDestroy } from 'svelte';
 	import { cameraService } from '$lib/services/camera';
 	import { uvcCameraService } from '$lib/services/uvcCamera';
 	import { soundEngine } from '$lib/utils/sounds';
 	import { settingsStore } from '$lib/stores/settings';
 	import CountdownOverlay from './CountdownOverlay.svelte';
-	import { Camera, FlipHorizontal, RefreshCw, AlertTriangle, Usb, ShieldAlert, Copy, Check } from '@lucide/svelte';
+	import { Camera, FlipHorizontal, RefreshCw, AlertTriangle, Usb, ShieldAlert, Copy, Check, SwitchCamera } from '@lucide/svelte';
 
 	interface Props {
 		onCapture: (photo: { dataUrl: string; blob: Blob }, btsVideo: { blob: Blob; url: string } | null) => void;
@@ -34,6 +34,9 @@
 	let cameraError = $state<string | null>(null);
 	let diagnosticReport = $state<CameraDiagnosticReport | null>(null);
 	let isCopied = $state(false);
+	let availableCameras = $state<VideoDeviceInfo[]>([]);
+	let isBlankFeed = $state(false);
+	let blankCheckTimer: NodeJS.Timeout | null = null;
 
 	// UVC Diagnostic state
 	let uvcErrorModal = $state<{
@@ -55,6 +58,34 @@
 	let enableSound = $derived($settingsStore.enableSound);
 	let isUvcMode = $derived($settingsStore.cameraSource === 'uvc' && uvcCameraService.isAvailable());
 
+	function startBlankFeedDetector() {
+		if (blankCheckTimer) clearInterval(blankCheckTimer);
+		isBlankFeed = false;
+
+		blankCheckTimer = setInterval(() => {
+			if (!videoElement || !isCameraReady || isUvcMode || isCountingDown) return;
+			if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
+				isBlankFeed = true;
+				return;
+			}
+			try {
+				const canvas = document.createElement('canvas');
+				canvas.width = 16;
+				canvas.height = 16;
+				const ctx = canvas.getContext('2d');
+				if (!ctx) return;
+				ctx.drawImage(videoElement, 0, 0, 16, 16);
+				const imgData = ctx.getImageData(0, 0, 16, 16).data;
+				let totalBrightness = 0;
+				for (let i = 0; i < imgData.length; i += 4) {
+					totalBrightness += imgData[i] + imgData[i + 1] + imgData[i + 2];
+				}
+				const avgBrightness = totalBrightness / (16 * 16 * 3);
+				isBlankFeed = avgBrightness < 2;
+			} catch (_) {}
+		}, 2000);
+	}
+
 	async function initCamera() {
 		cameraError = null;
 		diagnosticReport = null;
@@ -68,6 +99,7 @@
 		}
 
 		try {
+			availableCameras = await cameraService.getAvailableCameras();
 			const stream = await cameraService.startStream(
 				$settingsStore.cameraDeviceId,
 				$settingsStore.cameraResolution
@@ -80,6 +112,7 @@
 					console.warn('Auto-play error on video element:', playErr);
 				}
 				isCameraReady = true;
+				startBlankFeedDetector();
 				if (autoStartCountdown) {
 					setTimeout(() => startCountdown(), 1000);
 				}
@@ -95,6 +128,23 @@
 			} catch (_) {
 				cameraError = err?.message || 'Gagal memulai stream kamera.';
 			}
+		}
+	}
+
+	async function switchCamera() {
+		if (availableCameras.length <= 1) {
+			availableCameras = await cameraService.getAvailableCameras();
+		}
+		if (availableCameras.length <= 1) return;
+
+		const currentId = $settingsStore.cameraDeviceId;
+		const currentIndex = availableCameras.findIndex((c) => c.deviceId === currentId);
+		const nextIndex = (currentIndex + 1) % availableCameras.length;
+		const nextCamera = availableCameras[nextIndex];
+
+		if (nextCamera) {
+			settingsStore.updateSettings({ cameraDeviceId: nextCamera.deviceId });
+			await initCamera();
 		}
 	}
 
@@ -128,6 +178,7 @@ Stack Trace: ${diagnosticReport.errorStack || 'N/A'}`;
 
 	onDestroy(() => {
 		if (countdownTimer) clearInterval(countdownTimer);
+		if (blankCheckTimer) clearInterval(blankCheckTimer);
 		cameraService.stopStream();
 	});
 
@@ -346,9 +397,35 @@ Stack Trace: ${diagnosticReport.errorStack || 'N/A'}`;
 		</div>
 	</div>
 
+	<!-- Blank / Dark Feed Warning Banner (Detects if camera sends pitch black pixels or is asleep) -->
+	{#if isBlankFeed && isCameraReady && !isCountingDown && !cameraError}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			onclick={(e) => { e.stopPropagation(); switchCamera(); }}
+			class="absolute top-14 inset-x-4 z-25 flex items-center justify-center cursor-pointer animate-in fade-in slide-in-from-top-2 duration-300"
+		>
+			<div class="flex items-center gap-2 rounded-2xl bg-amber-500/95 hover:bg-amber-400 text-black px-3.5 py-2 shadow-2xl backdrop-blur-md transition-all active:scale-95 font-bold text-[11px] sm:text-xs">
+				<AlertTriangle class="h-4 w-4 shrink-0 text-black" />
+				<span>Layar Gelap (Kamera Standby/Cover)</span>
+				<span class="bg-black/20 px-2 py-0.5 rounded-lg text-[10px] ml-1">Ganti Kamera 🔄</span>
+			</div>
+		</div>
+	{/if}
+
 	<!-- Mirror Toggle & Quick Controls (Top-Right) -->
 	{#if !isUvcMode}
 		<div class="absolute top-3 right-3 sm:top-4 sm:right-4 z-20 flex items-center gap-2">
+			{#if availableCameras.length > 1}
+				<button
+					type="button"
+					onclick={(e) => { e.stopPropagation(); switchCamera(); }}
+					class="flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-xl bg-black/60 backdrop-blur-md border border-zinc-700/50 text-indigo-300 hover:text-white hover:bg-black/80 transition-all active:scale-95 cursor-pointer shadow-lg"
+					title="Ganti Perangkat Kamera"
+				>
+					<RefreshCw class="h-4 w-4" />
+				</button>
+			{/if}
 			<button
 				type="button"
 				onclick={(e) => { e.stopPropagation(); toggleMirror(); }}
