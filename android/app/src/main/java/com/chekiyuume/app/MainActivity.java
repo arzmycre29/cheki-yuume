@@ -46,6 +46,7 @@ public class MainActivity extends BridgeActivity {
         });
 
         super.onCreate(savedInstanceState);
+        registerPlugin(Camera2Plugin.class);
         hideSystemUI();
 
         // Inject NativeCrashReporter interface into WebView

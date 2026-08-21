@@ -21,6 +21,7 @@
 		uploadCustomFrameOverlayToCloudinary,
 		backupCustomFramesToCloudinary,
 		retrieveCustomFramesFromCloudinary,
+		backupAllSessionsToCloudinary,
 		retrieveSessionsFromCloudinary,
 		testCloudinaryConnection
 	} from '$lib/services/cloudStorage';
@@ -139,21 +140,38 @@
 				const sessionRes = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName);
 				if (sessionRes.success && sessionRes.sessions.length > 0) {
 					const cur = await getAllSessionsFromDB();
-					const existingIds = new Set(cur.map((s) => s.sessionId));
+					const existingMap = new Map(cur.map((s) => [s.sessionId, s]));
 					let changed = false;
 					for (const cs of sessionRes.sessions) {
-						if (!existingIds.has(cs.sessionId)) {
+						const existing = existingMap.get(cs.sessionId);
+						if (!existing) {
 							await saveSessionToDB({
 								sessionId: cs.sessionId,
 								guestName: cs.guestName || '',
+								createdAt: cs.createdAt || Date.now(),
 								mode: (cs.mode as any) || 'default',
-								layoutId: cs.layoutId || '4-cut-classic-white',
+								layoutId: cs.layoutId || 'default-4-classic',
+								photos: [],
+								assignedSlotPhotoIds: [],
+								stickers: [],
 								photostripDataUrl: cs.photoUrl || '',
-								videostripUrl: cs.videoUrl,
-								cloudShareUrl: cs.shareUrl,
-								createdAt: cs.createdAt,
-								photos: []
+								photostripBlob: null,
+								videostripBlob: null,
+								videostripUrl: cs.videoUrl || null,
+								printCount: 0,
+								cloudUploadStatus: 'success',
+								cloudPhotoUrl: cs.photoUrl || null,
+								cloudVideoUrl: cs.videoUrl || null,
+								cloudShareUrl: cs.shareUrl || null,
+								isOfflineSaved: true
 							});
+							changed = true;
+						} else if (cs.photoUrl && !existing.photostripDataUrl && !existing.cloudPhotoUrl) {
+							existing.photostripDataUrl = cs.photoUrl;
+							existing.cloudPhotoUrl = cs.photoUrl;
+							if (cs.videoUrl && !existing.videostripUrl) existing.videostripUrl = cs.videoUrl;
+							if (cs.shareUrl && !existing.cloudShareUrl) existing.cloudShareUrl = cs.shareUrl;
+							await saveSessionToDB(existing);
 							changed = true;
 						}
 					}
@@ -398,6 +416,49 @@
 	}
 
 	let isSyncingSessions = $state(false);
+	let isBackingUpSessions = $state(false);
+	let backupSessionProgress = $state('');
+
+	async function handleBackupSessionsToCloud() {
+		if (
+			formSettings.cloudProvider !== 'cloudinary' ||
+			!formSettings.cloudinaryCloudName?.trim() ||
+			!formSettings.cloudinaryUploadPreset?.trim()
+		) {
+			alert('Mohon lengkapi Cloud Name & Upload Preset Cloudinary di tab Cloud 30-Day terlebih dahulu.');
+			return;
+		}
+
+		if (sessions.length === 0) {
+			alert('Tidak ada riwayat sesi lokal untuk dicadangkan.');
+			return;
+		}
+
+		isBackingUpSessions = true;
+		backupSessionProgress = `Mengunggah 0/${sessions.length}...`;
+		try {
+			const res = await backupAllSessionsToCloudinary(
+				sessions,
+				formSettings.cloudinaryCloudName,
+				formSettings.cloudinaryUploadPreset,
+				(curr, total) => {
+					backupSessionProgress = `Mengunggah ${curr}/${total}...`;
+				}
+			);
+			if (res.success) {
+				saveMessage = `Berhasil mencadangkan ${res.count} sesi ke Cloudinary (chekiyuume/sessions_manifest.json)!`;
+				await loadSessions();
+			} else {
+				alert(res.error || 'Gagal mencadangkan sesi ke Cloudinary.');
+			}
+		} catch (err: any) {
+			alert(`Gagal mencadangkan sesi: ${err?.message || err}`);
+		} finally {
+			isBackingUpSessions = false;
+			backupSessionProgress = '';
+			setTimeout(() => (saveMessage = ''), 4000);
+		}
+	}
 
 	async function handleSyncSessionsFromCloud() {
 		if (
@@ -413,28 +474,46 @@
 			const res = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName);
 			if (res.success && res.sessions.length > 0) {
 				const cur = await getAllSessionsFromDB();
-				const existingIds = new Set(cur.map((s) => s.sessionId));
+				const existingMap = new Map(cur.map((s) => [s.sessionId, s]));
 				let addedCount = 0;
+				let updatedCount = 0;
 
 				for (const cs of res.sessions) {
-					if (!existingIds.has(cs.sessionId)) {
+					const existing = existingMap.get(cs.sessionId);
+					if (!existing) {
 						await saveSessionToDB({
 							sessionId: cs.sessionId,
 							guestName: cs.guestName || '',
+							createdAt: cs.createdAt || Date.now(),
 							mode: (cs.mode as any) || 'default',
-							layoutId: cs.layoutId || '4-cut-classic-white',
+							layoutId: cs.layoutId || 'default-4-classic',
+							photos: [],
+							assignedSlotPhotoIds: [],
+							stickers: [],
 							photostripDataUrl: cs.photoUrl || '',
-							videostripUrl: cs.videoUrl,
-							cloudShareUrl: cs.shareUrl,
-							createdAt: cs.createdAt,
-							photos: []
+							photostripBlob: null,
+							videostripBlob: null,
+							videostripUrl: cs.videoUrl || null,
+							printCount: 0,
+							cloudUploadStatus: 'success',
+							cloudPhotoUrl: cs.photoUrl || null,
+							cloudVideoUrl: cs.videoUrl || null,
+							cloudShareUrl: cs.shareUrl || null,
+							isOfflineSaved: true
 						});
 						addedCount++;
+					} else if (cs.photoUrl && !existing.photostripDataUrl && !existing.cloudPhotoUrl) {
+						existing.photostripDataUrl = cs.photoUrl;
+						existing.cloudPhotoUrl = cs.photoUrl;
+						if (cs.videoUrl && !existing.videostripUrl) existing.videostripUrl = cs.videoUrl;
+						if (cs.shareUrl && !existing.cloudShareUrl) existing.cloudShareUrl = cs.shareUrl;
+						await saveSessionToDB(existing);
+						updatedCount++;
 					}
 				}
 
 				await loadSessions();
-				saveMessage = `Berhasil menyinkronkan riwayat! (${addedCount} sesi baru ditambahkan dari Cloudinary)`;
+				saveMessage = `Berhasil menyinkronkan riwayat! (${addedCount} sesi baru ditambahkan${updatedCount > 0 ? `, ${updatedCount} diperbarui` : ''} dari Cloudinary)`;
 			} else if (res.success) {
 				saveMessage = 'Sinkronisasi riwayat selesai: Semua sesi sudah up to date.';
 			} else {
@@ -765,19 +844,36 @@
 							<span>Segarkan</span>
 						</button>
 
+						<!-- Backup All Sessions to Cloudinary -->
+						<button
+							type="button"
+							onclick={handleBackupSessionsToCloud}
+							disabled={isBackingUpSessions || sessions.length === 0}
+							class="flex items-center gap-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600 border border-purple-500/40 px-3.5 py-2 text-xs font-bold text-purple-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
+							title="Cadangkan seluruh ({sessions.length}) riwayat sesi lokal ke Cloudinary agar bisa diunduh device lain"
+						>
+							{#if isBackingUpSessions}
+								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+								<span>{backupSessionProgress || 'Mencadangkan...'}</span>
+							{:else}
+								<CloudUpload class="h-3.5 w-3.5" />
+								<span>Backup ke Cloud ({sessions.length})</span>
+							{/if}
+						</button>
+
 						<!-- Cloudinary Global Sessions Sync -->
 						<button
 							type="button"
 							onclick={handleSyncSessionsFromCloud}
 							disabled={isSyncingSessions}
 							class="flex items-center gap-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600 border border-rose-500/40 px-3.5 py-2 text-xs font-bold text-rose-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
-							title="Tarik & sinkronkan semua riwayat foto dari Cloudinary antar laptop"
+							title="Tarik & sinkronkan semua riwayat foto dari Cloudinary antar laptop / HP"
 						>
 							{#if isSyncingSessions}
 								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
 								<span>Menyinkronkan...</span>
 							{:else}
-								<Cloud class="h-3.5 w-3.5" />
+								<CloudDownload class="h-3.5 w-3.5" />
 								<span>Tarik dari Cloud</span>
 							{/if}
 						</button>

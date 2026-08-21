@@ -504,6 +504,175 @@ export async function recordSessionToCloudinaryManifest(
 }
 
 /**
+ * Uploads/syncs all local sessions to Cloudinary and updates sessions_manifest.json
+ */
+export async function backupAllSessionsToCloudinary(
+	sessions: SessionData[],
+	cloudName: string,
+	uploadPreset: string,
+	onProgress?: (current: number, total: number) => void
+): Promise<{ success: boolean; count: number; error?: string }> {
+	try {
+		const cleanCloud = cloudName.trim();
+		const cleanPreset = uploadPreset.trim();
+		if (!cleanCloud || !cleanPreset) {
+			throw new Error('Cloud Name dan Upload Preset Cloudinary belum diatur.');
+		}
+
+		if (sessions.length === 0) {
+			return { success: false, count: 0, error: 'Tidak ada sesi lokal untuk dicadangkan.' };
+		}
+
+		// 1. Fetch existing remote manifest if any
+		let remoteSessions: CloudSessionSummary[] = [];
+		try {
+			const manifestUrl = `https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`;
+			const res = await fetch(manifestUrl, { cache: 'no-store' });
+			if (res.ok) {
+				const data = await res.json();
+				if (data && Array.isArray(data.sessions)) {
+					remoteSessions = data.sessions;
+				}
+			}
+		} catch (_) {}
+
+		const remoteMap = new Map<string, CloudSessionSummary>();
+		remoteSessions.forEach((s) => remoteMap.set(s.sessionId, s));
+
+		// 2. Process and upload photostrips for sessions that don't have cloud URLs yet
+		let processed = 0;
+		for (const session of sessions) {
+			let photoUrl = session.cloudPhotoUrl || null;
+			let videoUrl = session.cloudVideoUrl || null;
+
+			// If already in remote manifest with URLs, use them
+			const existingRemote = remoteMap.get(session.sessionId);
+			if (existingRemote) {
+				if (!photoUrl && existingRemote.photoUrl) photoUrl = existingRemote.photoUrl;
+				if (!videoUrl && existingRemote.videoUrl) videoUrl = existingRemote.videoUrl;
+			}
+
+			// If photoUrl is still null but we have local photostrip blob or dataUrl, upload to Cloudinary
+			if (!photoUrl && (session.photostripBlob || session.photostripDataUrl)) {
+				try {
+					const sanitizedGuestName = session.guestName
+						? session.guestName
+								.trim()
+								.toLowerCase()
+								.replace(/[^a-z0-9_-]/g, '_')
+								.replace(/_+/g, '_')
+								.slice(0, 30)
+						: 'guest';
+					const sessionFolder = `chekiyuume/sessions/${sanitizedGuestName}_${session.sessionId}`;
+
+					let blobToUpload: Blob | null = session.photostripBlob || null;
+					if (!blobToUpload && session.photostripDataUrl) {
+						const res = await fetch(session.photostripDataUrl);
+						blobToUpload = await res.blob();
+					}
+
+					if (blobToUpload) {
+						photoUrl = await uploadToCloudinary(
+							blobToUpload,
+							'image',
+							cleanCloud,
+							cleanPreset,
+							{
+								folder: sessionFolder,
+								publicId: `photostrip_${session.sessionId}`,
+								fileName: `photostrip_${session.sessionId}.png`,
+								tags: ['chekiyuume', 'session', 'photostrip', session.sessionId, sanitizedGuestName]
+							}
+						);
+					}
+				} catch (uploadErr) {
+					console.warn(`[Cloud] Failed to upload photostrip for session ${session.sessionId}:`, uploadErr);
+				}
+			}
+
+			// Same for videostrip if available
+			if (!videoUrl && session.videostripBlob) {
+				try {
+					const sanitizedGuestName = session.guestName
+						? session.guestName
+								.trim()
+								.toLowerCase()
+								.replace(/[^a-z0-9_-]/g, '_')
+								.replace(/_+/g, '_')
+								.slice(0, 30)
+						: 'guest';
+					const sessionFolder = `chekiyuume/sessions/${sanitizedGuestName}_${session.sessionId}`;
+
+					videoUrl = await uploadToCloudinary(
+						session.videostripBlob,
+						'video',
+						cleanCloud,
+						cleanPreset,
+						{
+							folder: sessionFolder,
+							publicId: `videostrip_${session.sessionId}`,
+							fileName: `videostrip_${session.sessionId}.mp4`,
+							tags: ['chekiyuume', 'session', 'videostrip', session.sessionId, sanitizedGuestName]
+						}
+					);
+				} catch (vidErr) {
+					console.warn(`[Cloud] Failed to upload videostrip for session ${session.sessionId}:`, vidErr);
+				}
+			}
+
+			const shareUrl = session.cloudShareUrl || `${window.location.origin}/share/${session.sessionId}`;
+
+			remoteMap.set(session.sessionId, {
+				sessionId: session.sessionId,
+				guestName: session.guestName,
+				mode: session.mode,
+				layoutId: session.layoutId,
+				photoUrl: photoUrl || undefined,
+				videoUrl: videoUrl || undefined,
+				shareUrl,
+				createdAt: session.createdAt || Date.now()
+			});
+
+			processed++;
+			if (onProgress) onProgress(processed, sessions.length);
+		}
+
+		// Convert remoteMap back to sorted array (newest first)
+		const mergedSessions = Array.from(remoteMap.values()).sort((a, b) => b.createdAt - a.createdAt);
+
+		const manifestData = {
+			version: '1.0',
+			updatedAt: Date.now(),
+			totalSessions: mergedSessions.length,
+			sessions: mergedSessions.slice(0, 500)
+		};
+
+		const blob = new Blob([JSON.stringify(manifestData, null, 2)], {
+			type: 'application/json'
+		});
+
+		await uploadToCloudinary(blob, 'raw', cleanCloud, cleanPreset, {
+			folder: 'chekiyuume',
+			publicId: 'sessions_manifest.json',
+			fileName: 'sessions_manifest.json',
+			tags: ['chekiyuume', 'sessions_manifest', 'database']
+		});
+
+		return {
+			success: true,
+			count: mergedSessions.length
+		};
+	} catch (err: any) {
+		console.error('[Cloud] backupAllSessionsToCloudinary failed:', err);
+		return {
+			success: false,
+			count: 0,
+			error: err?.message || String(err)
+		};
+	}
+}
+
+/**
  * Retrieves all sessions from Cloudinary sessions_manifest.json
  */
 export async function retrieveSessionsFromCloudinary(
@@ -516,7 +685,10 @@ export async function retrieveSessionsFromCloudinary(
 		}
 
 		const manifestUrl = `https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`;
-		const res = await fetch(manifestUrl);
+		const res = await fetch(manifestUrl, {
+			cache: 'no-store',
+			headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+		});
 
 		if (!res.ok) {
 			if (res.status === 404) {
