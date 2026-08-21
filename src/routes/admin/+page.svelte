@@ -123,6 +123,16 @@
 		if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
 			navigator.mediaDevices.addEventListener('devicechange', refreshCameras);
 		}
+
+		// Auto-sync frames from Cloudinary on mount if configured
+		if (formSettings.cloudProvider === 'cloudinary' && formSettings.cloudinaryCloudName?.trim()) {
+			try {
+				const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
+				if (res.success && res.frames.length > 0) {
+					customFramesStore.syncFromRemote(res.frames);
+				}
+			} catch (_) {}
+		}
 	});
 
 	onDestroy(() => {
@@ -511,6 +521,27 @@
 
 		saveMessage = 'Frame baru berhasil ditambahkan!';
 		setTimeout(() => (saveMessage = ''), 3000);
+
+		// Auto backup manifest to Cloudinary in background
+		autoBackupFrames();
+	}
+
+	async function autoBackupFrames() {
+		if (
+			formSettings.cloudProvider === 'cloudinary' &&
+			formSettings.cloudinaryCloudName?.trim() &&
+			formSettings.cloudinaryUploadPreset?.trim()
+		) {
+			try {
+				await backupCustomFramesToCloudinary(
+					allFrames,
+					formSettings.cloudinaryCloudName,
+					formSettings.cloudinaryUploadPreset
+				);
+			} catch (e) {
+				console.warn('[Frames] Auto backup manifest error:', e);
+			}
+		}
 	}
 
 	function handleDeleteFrame(frameId: string, name: string) {
@@ -518,6 +549,7 @@
 			customFramesStore.deleteFrame(frameId);
 			saveMessage = 'Frame berhasil dihapus!';
 			setTimeout(() => (saveMessage = ''), 3000);
+			autoBackupFrames();
 		}
 	}
 
