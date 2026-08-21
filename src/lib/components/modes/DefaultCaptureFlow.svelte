@@ -112,7 +112,7 @@
 	</div>
 
 	<!-- Right: Compact Live Strip Sidebar — narrow panel, strip scales to fit -->
-	<div class="flex items-center justify-center h-full min-h-0 shrink-0 w-[140px] sm:w-[160px] lg:w-[180px]">
+	<div class="flex items-start justify-center h-full min-h-0 shrink-0 overflow-hidden w-[90px] sm:w-[130px] lg:w-[160px]">
 		<LiveStripPreview
 			mode="default"
 			layout={layout}

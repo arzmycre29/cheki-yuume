@@ -14,11 +14,11 @@
 	let { mode, layout, photos, totalPoses, currentPoseIndex, onSlotClick }: Props = $props();
 </script>
 
-<div class="flex h-full w-full items-center justify-center min-h-0 min-w-0 overflow-hidden select-none">
+<div class="flex h-full w-full items-start justify-center min-h-0 min-w-0 overflow-hidden select-none">
 	{#if mode === 'default'}
-		<!-- Default Mode: 100% WYSIWYG Photostrip Live Preview — width-driven, scales to container -->
+		<!-- Default Mode: 100% WYSIWYG Photostrip Live Preview — width-driven, clips to container height -->
 		<div
-			class="relative rounded-xs shadow-2xl transition-all duration-300 border border-zinc-700/60 overflow-hidden shrink-0"
+			class="relative rounded-xs shadow-2xl transition-all duration-300 border border-zinc-700/60 overflow-hidden shrink-0 max-h-full"
 			style="background-color: {layout.backgroundColor || '#FFFFFF'}; width: 100%; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
 		>
 			<!-- Custom Background Image if present -->
@@ -64,6 +64,7 @@
 				<img src={layout.overlayUrl} alt="Overlay" class="absolute inset-0 h-full w-full object-cover pointer-events-none z-30" />
 			{/if}
 		</div>
+
 	{:else}
 		<!-- Creative Mode: 8-Shot Thumbnail Gallery Strip -->
 		<div class="flex flex-col h-full w-[160px] sm:w-[200px] lg:w-[240px] rounded-2xl bg-zinc-900/90 border border-zinc-800 p-3 shadow-xl overflow-hidden shrink-0">
