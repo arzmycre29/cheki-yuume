@@ -18,7 +18,7 @@
 	{#if mode === 'default'}
 		<!-- Default Mode: Unified cohesive photostrip preview (Locked aspect-ratio, zero distortion, zero clipping) -->
 		<div
-			class="relative w-full rounded-xs sm:rounded-sm shadow-xl overflow-hidden shrink-0 transition-all duration-300"
+			class="relative w-full rounded-md sm:rounded-lg shadow-xl overflow-hidden shrink-0 transition-all duration-300"
 			style="background-color: {layout.backgroundColor || '#FFFFFF'}; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
 		>
 			<!-- Custom Background Image if present -->
@@ -39,7 +39,7 @@
 					type="button"
 					onclick={() => onSlotClick && onSlotClick(idx)}
 					class="absolute overflow-hidden cursor-pointer transition-all duration-200 z-10"
-					style="left: {leftPct}%; top: {topPct}%; width: {widthPct}%; height: {heightPct}%; border-radius: 2px; background: rgba(20,20,20,0.72);"
+					style="left: {leftPct}%; top: {topPct}%; width: {widthPct}%; height: {heightPct}%; border-radius: 2px; background: rgba(28,28,32,0.85);"
 					title={photo ? `Klik untuk Ulangi (Retake) Slot ${idx + 1}` : `Slot ${idx + 1}`}
 				>
 					{#if photo && photo.dataUrl}
@@ -49,10 +49,10 @@
 							<CheckCircle2 class="h-2.5 w-2.5" />
 						</div>
 					{:else}
-						<!-- Empty slot — minimal placeholder, no dark card effect -->
-						<div class="flex h-full w-full flex-col items-center justify-center opacity-40 pointer-events-none">
-							<ImageIcon class="h-3 w-3 mb-0.5" style="color: {layout.backgroundColor === '#FFFFFF' || !layout.backgroundColor ? '#666' : '#aaa'}" />
-							<span class="text-[7px] font-bold uppercase" style="color: {layout.backgroundColor === '#FFFFFF' || !layout.backgroundColor ? '#666' : '#aaa'}">{idx + 1}</span>
+						<!-- Empty slot — minimal clean placeholder -->
+						<div class="flex h-full w-full flex-col items-center justify-center opacity-30 pointer-events-none">
+							<ImageIcon class="h-2.5 w-2.5 sm:h-3 sm:w-3 mb-0.5 text-zinc-400" />
+							<span class="text-[6px] sm:text-[7px] font-bold text-zinc-400 uppercase">{idx + 1}</span>
 						</div>
 					{/if}
 
@@ -60,7 +60,7 @@
 					{#if isCurrent}
 						<div class="absolute inset-0 pointer-events-none z-20" style="box-shadow: inset 0 0 0 2px #f43f5e; border-radius: 2px;"></div>
 						<div class="absolute top-0.5 left-0.5 rounded-xs bg-rose-500 px-1 py-px z-30 pointer-events-none">
-							<span class="text-[5px] font-black text-white uppercase tracking-wide">Aktif</span>
+							<span class="text-[5px] sm:text-[6px] font-black text-white uppercase tracking-wider">AKTIF</span>
 						</div>
 					{/if}
 				</button>

@@ -111,8 +111,8 @@
 		</div>
 	</div>
 
-	<!-- Right: Dedicated Live Frame Strip Showcase (Centered Card, True Aspect Ratio, Zero Distortion) -->
-	<div class="flex flex-col items-center justify-center shrink-0 w-[95px] sm:w-[140px] lg:w-[170px] my-auto p-2 sm:p-3 lg:p-3.5 bg-zinc-900/90 border border-zinc-800/80 rounded-2xl sm:rounded-3xl shadow-2xl backdrop-blur-md">
+	<!-- Right: Dedicated Live Frame Strip Showcase Card -->
+	<div class="flex flex-col items-center justify-center shrink-0 w-[95px] sm:w-[135px] lg:w-[165px] my-auto p-2 sm:p-3 bg-zinc-900/90 border border-zinc-800 rounded-2xl sm:rounded-3xl shadow-2xl backdrop-blur-md">
 		<div class="w-full flex items-center justify-center">
 			<LiveStripPreview
 				mode="default"
@@ -126,7 +126,7 @@
 
 		<!-- Bottom Progress Pill (0 / 4) matching studio aesthetic -->
 		<div class="mt-2 shrink-0 flex items-center justify-center w-full">
-			<span class="rounded-lg sm:rounded-xl bg-zinc-800/90 border border-zinc-700/60 px-2.5 sm:px-3 py-0.5 sm:py-1 text-[9px] sm:text-xs font-mono font-bold text-zinc-300 shadow-sm">
+			<span class="rounded-full bg-zinc-950/80 border border-zinc-800/80 px-2.5 sm:px-3 py-0.5 sm:py-1 text-[9px] sm:text-[11px] font-mono font-bold text-zinc-400 shadow-inner">
 				<span class="text-rose-400 font-extrabold">{photos.length}</span> / {totalPoses}
 			</span>
 		</div>
