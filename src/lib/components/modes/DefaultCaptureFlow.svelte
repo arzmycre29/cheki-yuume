@@ -112,7 +112,7 @@
 	</div>
 
 	<!-- Right: Dedicated Live Frame Strip Showcase (Full-Height, True Aspect Ratio, Zero Distortion) -->
-	<div class="flex items-center justify-center h-full max-h-[min(92vh,740px)] min-h-0 shrink-0 p-2.5 sm:p-4 bg-zinc-900/85 border border-zinc-800 rounded-2xl sm:rounded-3xl shadow-2xl backdrop-blur-md">
+	<div class="flex items-center justify-center h-full max-h-[min(92vh,740px)] w-[160px] sm:w-[190px] md:w-[210px] lg:w-[230px] xl:w-[250px] min-h-0 shrink-0 p-2.5 sm:p-4 bg-zinc-900/90 border border-zinc-800 rounded-2xl sm:rounded-3xl shadow-2xl backdrop-blur-md overflow-hidden">
 		<LiveStripPreview
 			mode="default"
 			layout={layout}
