@@ -175,8 +175,8 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		}
 	}
 
-	// 6. Draw Footer / Branding Area (only if no custom artwork overlay is applied)
-	if (!layout.overlayUrl) {
+	// 6. Draw Footer / Branding Area (only if custom non-default frame and no artwork overlay)
+	if (!layout.id.startsWith('default-') && !layout.overlayUrl) {
 		const isDarkBg = layout.backgroundColor.toLowerCase() === '#18181b' || layout.backgroundColor.toLowerCase() === '#000000';
 		const textColor = isDarkBg ? '#F4F4F5' : '#18181B';
 		const subTextColor = isDarkBg ? '#A1A1AA' : '#71717A';

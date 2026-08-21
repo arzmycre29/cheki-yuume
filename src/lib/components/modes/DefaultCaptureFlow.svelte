@@ -3,7 +3,7 @@
 	import type { FrameLayout, PhotoItem } from '$lib/types';
 	import CameraView from '$lib/components/CameraView.svelte';
 	import LiveStripPreview from '$lib/components/LiveStripPreview.svelte';
-	import { ArrowRight, RotateCcw } from '@lucide/svelte';
+	import { Camera, ArrowRight, RotateCcw } from '@lucide/svelte';
 
 	interface Props {
 		layout: FrameLayout;
@@ -12,11 +12,15 @@
 
 	let { layout, onFinishCapture }: Props = $props();
 
+	let cameraViewRef = $state<any>(null);
 	let currentPoseIndex = $state(0);
-	let totalPoses = $derived(layout.totalSlots);
+	let totalPoses = $derived(layout?.slots?.length || 4);
 	let photos = $derived($sessionStore.photos);
 
-	let isAllPhotosFilled = $derived(photos.length >= totalPoses);
+	let isAllPhotosFilled = $derived(
+		photos.length >= totalPoses &&
+		layout.slots.every((_, idx) => photos.some((p) => p.index === idx))
+	);
 
 	function handleCapture(
 		photoData: { dataUrl: string; blob: Blob },
@@ -34,68 +38,81 @@
 
 		sessionStore.addPhoto(newPhoto);
 
-		// If there is still an empty slot, advance to next empty slot
-		const nextEmpty = findNextEmptySlot(currentPoseIndex);
-		if (nextEmpty !== -1) {
-			currentPoseIndex = nextEmpty;
+		// Advance to next empty slot or next pose index
+		if (currentPoseIndex + 1 < totalPoses) {
+			currentPoseIndex++;
 		}
 	}
 
-	function findNextEmptySlot(fromIndex: number): number {
-		for (let i = 0; i < totalPoses; i++) {
-			const idx = (fromIndex + 1 + i) % totalPoses;
-			const hasPhoto = photos.some((p) => p.index === idx);
-			if (!hasPhoto) return idx;
-		}
-		return -1;
-	}
-
-	function handleRetakeSlot(slotIdx: number) {
-		currentPoseIndex = slotIdx;
+	function handleRetakeSlot(slotIndex: number) {
+		currentPoseIndex = slotIndex;
 	}
 
 	function handleRetakeCurrent() {
 		sessionStore.retakeSlot(currentPoseIndex);
 	}
+
+	function triggerShutter() {
+		if (cameraViewRef?.startCountdown) {
+			cameraViewRef.startCountdown();
+		}
+	}
 </script>
 
-<div class="flex flex-col lg:flex-row items-center justify-center gap-8 xl:gap-12 h-full w-full max-w-7xl mx-auto px-6 py-4 overflow-hidden">
-	<!-- Left / Center: Camera Viewfinder -->
-	<div class="flex-1 flex flex-col items-center justify-center min-h-0 w-full max-w-3xl">
-		<CameraView
-			currentPoseIndex={currentPoseIndex}
-			totalPoses={totalPoses}
-			onCapture={handleCapture}
-		/>
+<div class="flex flex-row items-center justify-center gap-3 sm:gap-6 lg:gap-8 h-full w-full max-h-screen max-w-7xl mx-auto p-2 sm:p-4 lg:p-6 overflow-hidden select-none">
+	<!-- Left / Center: Clean 4:3 Studio Camera Viewfinder + Ergonomic Bottom Controls -->
+	<div class="flex-1 flex flex-col items-center justify-center h-full min-h-0 min-w-0 gap-2 sm:gap-3.5">
+		<!-- Camera Viewfinder with flexible scaling maintaining 4:3 -->
+		<div class="flex-1 min-h-0 flex items-center justify-center w-full min-w-0">
+			<CameraView
+				bind:this={cameraViewRef}
+				currentPoseIndex={currentPoseIndex}
+				totalPoses={totalPoses}
+				onCapture={handleCapture}
+			/>
+		</div>
 
-		<!-- Quick Retake Controls below camera -->
-		<div class="flex items-center gap-3 mt-3">
+		<!-- Ergonomic Action Bar below Viewfinder -->
+		<div class="flex flex-row items-center justify-center gap-2 sm:gap-3 w-full max-w-lg shrink-0 px-2">
+			<!-- Big Tactile Shutter Button -->
+			<button
+				type="button"
+				onclick={triggerShutter}
+				class="group relative flex-1 flex items-center justify-center gap-2 rounded-xl sm:rounded-2xl bg-gradient-to-r from-rose-500 via-rose-600 to-pink-600 hover:from-rose-600 hover:to-pink-700 py-2.5 sm:py-3.5 px-4 text-xs sm:text-sm font-black uppercase tracking-wider text-white shadow-xl shadow-rose-500/25 active:scale-95 cursor-pointer transition-all min-h-[44px]"
+			>
+				<Camera class="h-4 w-4 sm:h-5 sm:w-5 text-white group-hover:scale-110 transition-transform" />
+				<span>Jepret Pose #{currentPoseIndex + 1}</span>
+			</button>
+
+			<!-- Quick Retake if slot already filled -->
 			{#if photos.some((p) => p.index === currentPoseIndex)}
 				<button
 					type="button"
 					onclick={handleRetakeCurrent}
-					class="flex items-center gap-2 rounded-2xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700 px-4 py-2 text-xs font-bold text-zinc-300 hover:text-white shadow-lg cursor-pointer transition-all hover:scale-105"
+					class="flex items-center justify-center gap-1.5 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700 py-2.5 sm:py-3.5 px-3.5 text-xs sm:text-sm font-bold text-zinc-300 hover:text-white shadow-sm active:scale-95 cursor-pointer min-h-[44px]"
+					title="Ulangi Pose Ini"
 				>
-					<RotateCcw class="h-3.5 w-3.5 text-rose-400" />
-					<span>Ulangi Pose Ini (Retake #{currentPoseIndex + 1})</span>
+					<RotateCcw class="h-4 w-4 text-rose-400" />
+					<span class="hidden sm:inline">Ulangi</span>
 				</button>
 			{/if}
 
+			<!-- Finish Button -->
 			{#if isAllPhotosFilled}
 				<button
 					type="button"
 					onclick={onFinishCapture}
-					class="flex items-center gap-2 rounded-2xl bg-rose-500 hover:bg-rose-600 px-6 py-2.5 text-xs font-black uppercase tracking-wider text-white shadow-xl shadow-rose-500/30 cursor-pointer transition-all hover:scale-105 animate-in zoom-in-95 duration-200"
+					class="flex items-center justify-center gap-1.5 rounded-xl sm:rounded-2xl bg-emerald-500 hover:bg-emerald-600 py-2.5 sm:py-3.5 px-4 sm:px-5 text-xs sm:text-sm font-black uppercase tracking-wider text-white shadow-lg shadow-emerald-500/25 active:scale-95 cursor-pointer animate-in zoom-in-95 duration-200 min-h-[44px]"
 				>
-					<span>Selesai & Proses Hasil</span>
+					<span>Selesai</span>
 					<ArrowRight class="h-4 w-4" />
 				</button>
 			{/if}
 		</div>
 	</div>
 
-	<!-- Right: Live Frame Strip Preview with Clean Separation -->
-	<div class="shrink-0 flex flex-col justify-center items-center min-h-0 pl-2">
+	<!-- Right: Dedicated Live Frame Strip Showcase (Full-Height, True Aspect Ratio, Zero Distortion) -->
+	<div class="flex items-center justify-center h-full max-h-[min(92vh,740px)] min-h-0 shrink-0 p-2.5 sm:p-4 bg-zinc-900/85 border border-zinc-800 rounded-2xl sm:rounded-3xl shadow-2xl backdrop-blur-md">
 		<LiveStripPreview
 			mode="default"
 			layout={layout}

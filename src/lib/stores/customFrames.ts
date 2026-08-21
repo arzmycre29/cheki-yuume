@@ -40,7 +40,9 @@ function loadInitialFrames(): FrameLayout[] {
 		if (raw) {
 			const custom = JSON.parse(raw);
 			if (Array.isArray(custom) && custom.length > 0) {
-				return custom;
+				// Keep only user-added custom frames and combine with latest ALL_FRAME_TEMPLATES
+				const userCustom = custom.filter((f) => f.id.startsWith('custom-'));
+				return [...ALL_FRAME_TEMPLATES, ...userCustom];
 			}
 		}
 	} catch (e) {

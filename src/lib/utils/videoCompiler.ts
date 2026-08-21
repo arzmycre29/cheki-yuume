@@ -17,14 +17,18 @@ export interface VideoCompilerOptions {
 	onProgress?: (progress: number) => void;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 function loadImage(src: string): Promise<HTMLImageElement> {
-	return new Promise((resolve, reject) => {
+	return new Promise((resolve) => {
 		const img = new Image();
 		img.crossOrigin = 'anonymous';
 		img.onload = () => resolve(img);
-		img.onerror = () => resolve(img); // Don't crash pipeline on image error
+		img.onerror = () => resolve(img);
 		img.src = src;
-		setTimeout(() => resolve(img), 3000);
+		setTimeout(() => resolve(img), 4000);
 	});
 }
 
@@ -36,35 +40,48 @@ function createVideoElement(url: string): Promise<HTMLVideoElement> {
 		video.muted = true;
 		video.playsInline = true;
 		video.preload = 'auto';
-		video.loop = true;
+		// Do NOT set loop=true — we will seek manually
 
-		let isResolved = false;
-		const done = () => {
-			if (!isResolved) {
-				isResolved = true;
-				resolve(video);
-			}
+		let done = false;
+		const finish = () => {
+			if (!done) { done = true; resolve(video); }
 		};
-
-		video.oncanplaythrough = done;
-		video.onloadeddata = done;
-		video.onerror = done;
-
-		setTimeout(() => {
-			done();
-		}, 3000);
-
+		video.oncanplaythrough = finish;
+		video.onloadeddata = finish;
+		video.onerror = finish;
+		setTimeout(finish, 4000);
 		video.load();
+	});
+}
+
+/**
+ * Seek a video element to a precise timestamp and wait for the frame to decode.
+ */
+function seekVideoTo(video: HTMLVideoElement, time: number): Promise<void> {
+	return new Promise((resolve) => {
+		const clampedTime = Math.max(0, isFinite(video.duration) && video.duration > 0
+			? Math.min(time, video.duration - 0.001)
+			: time);
+
+		// Already close enough (within one frame at 30fps)
+		if (Math.abs(video.currentTime - clampedTime) < 0.034) {
+			resolve();
+			return;
+		}
+
+		let settled = false;
+		const finish = () => {
+			if (!settled) { settled = true; resolve(); }
+		};
+		video.addEventListener('seeked', finish, { once: true });
+		setTimeout(finish, 300); // safety fallback
+		video.currentTime = clampedTime;
 	});
 }
 
 function drawRoundedRect(
 	ctx: CanvasRenderingContext2D,
-	x: number,
-	y: number,
-	width: number,
-	height: number,
-	radius: number
+	x: number, y: number, width: number, height: number, radius: number
 ) {
 	ctx.beginPath();
 	ctx.moveTo(x + radius, y);
@@ -87,26 +104,21 @@ function drawToSlot(
 ) {
 	const sourceWidth = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
 	const sourceHeight = source instanceof HTMLVideoElement ? source.videoHeight : source.height;
-
 	if (!sourceWidth || !sourceHeight) return;
 
 	const targetAspect = slot.width / slot.height;
 	let cropWidth = sourceWidth;
 	let cropHeight = cropWidth / targetAspect;
-
 	if (cropHeight > sourceHeight) {
 		cropHeight = sourceHeight;
 		cropWidth = cropHeight * targetAspect;
 	}
-
 	const sx = (sourceWidth - cropWidth) / 2;
 	const sy = (sourceHeight - cropHeight) / 2;
 
 	ctx.save();
-	const radius = slot.borderRadius ?? 12;
-	drawRoundedRect(ctx, slot.x, slot.y, slot.width, slot.height, radius);
+	drawRoundedRect(ctx, slot.x, slot.y, slot.width, slot.height, slot.borderRadius ?? 12);
 	ctx.clip();
-
 	if (mirror) {
 		ctx.translate(slot.x + slot.width, slot.y);
 		ctx.scale(-1, 1);
@@ -121,9 +133,120 @@ function isWebCodecsSupported(): boolean {
 	return typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
 }
 
-/**
- * Compiles a Sequential Videostrip into MP4 using live video playback and WebCodecs
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Core composite frame renderer
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface DrawFrameOpts {
+	ctx: CanvasRenderingContext2D;
+	elapsed: number;
+	origWidth: number;
+	origHeight: number;
+	scaleFactor: number;
+	canvasWidth: number;
+	canvasHeight: number;
+	layout: FrameLayout;
+	numSlots: number;
+	activeSlots: number[];
+	segmentDuration: number;
+	singlePassDuration: number;
+	preloadedImages: Map<number, HTMLImageElement>;
+	preloadedVideos: Map<number, HTMLVideoElement>;
+	activeSlotIndex: number; // current slot being animated (already resolved)
+	activeSlot: number;
+	overlayImg: HTMLImageElement | null;
+	bgImg: HTMLImageElement | null;
+	stickers: StickerItem[];
+	isMirrored: boolean;
+	brandingTitle: string;
+	brandingSubtitle: string;
+	guestName: string;
+}
+
+function drawCompositeFrame(opts: DrawFrameOpts) {
+	const {
+		ctx, elapsed, origWidth, origHeight, scaleFactor, canvasWidth, canvasHeight,
+		layout, numSlots, activeSlot,
+		preloadedImages, preloadedVideos,
+		overlayImg, bgImg, stickers, isMirrored,
+		brandingTitle, brandingSubtitle, guestName
+	} = opts;
+
+	ctx.save();
+	if (scaleFactor !== 1) {
+		ctx.scale(canvasWidth / origWidth, canvasHeight / origHeight);
+	}
+
+	// Background
+	ctx.fillStyle = layout.backgroundColor || '#FFFFFF';
+	ctx.fillRect(0, 0, origWidth, origHeight);
+	if (bgImg) ctx.drawImage(bgImg, 0, 0, origWidth, origHeight);
+
+	// Slots
+	for (let i = 0; i < numSlots; i++) {
+		const slot = layout.slots[i];
+		if (i === activeSlot) {
+			const video = preloadedVideos.get(i);
+			// Use video if loaded, otherwise fallback to still image
+			if (video && video.readyState >= 2 && video.videoWidth > 0) {
+				drawToSlot(ctx, video, slot, isMirrored);
+			} else {
+				const photo = preloadedImages.get(i);
+				if (photo) drawToSlot(ctx, photo, slot, false);
+			}
+		} else {
+			const photo = preloadedImages.get(i);
+			if (photo) drawToSlot(ctx, photo, slot, false);
+		}
+	}
+
+	// Overlay
+	if (overlayImg) ctx.drawImage(overlayImg, 0, 0, origWidth, origHeight);
+
+	// Stickers
+	for (const st of stickers) {
+		ctx.save();
+		ctx.translate((st.x / 100) * origWidth, (st.y / 100) * origHeight);
+		if (st.rotation) ctx.rotate((st.rotation * Math.PI) / 180);
+		ctx.font = `${st.size || 80}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.fillText(st.emoji, 0, 0);
+		ctx.restore();
+	}
+
+	// Branding footer (custom frames only)
+	if (!layout.id.startsWith('default-') && !overlayImg) {
+		const isDarkBg = ['#18181b', '#000000'].includes(layout.backgroundColor.toLowerCase());
+		const textColor = isDarkBg ? '#F4F4F5' : '#18181B';
+		const subTextColor = isDarkBg ? '#A1A1AA' : '#71717A';
+		const footerTop = layout.canvasHeight - layout.footerHeight;
+		const cx = layout.canvasWidth / 2;
+
+		ctx.save();
+		ctx.fillStyle = textColor;
+		ctx.font = '800 48px "Outfit", sans-serif';
+		ctx.textAlign = 'center';
+		ctx.letterSpacing = '4px';
+		ctx.fillText(brandingTitle.toUpperCase(), cx, footerTop + 90);
+
+		ctx.fillStyle = subTextColor;
+		ctx.font = '600 24px "Plus Jakarta Sans", sans-serif';
+		ctx.letterSpacing = '2px';
+		const sub = guestName
+			? `${guestName.toUpperCase()} • ${brandingSubtitle.toUpperCase()}`
+			: brandingSubtitle.toUpperCase();
+		ctx.fillText(sub, cx, footerTop + 140);
+		ctx.restore();
+	}
+
+	ctx.restore();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main export
+// ─────────────────────────────────────────────────────────────────────────────
+
 export async function compileSequentialVideostrip(
 	options: VideoCompilerOptions
 ): Promise<{ blob: Blob; url: string }> {
@@ -136,7 +259,7 @@ export async function compileSequentialVideostrip(
 		sessionId = '',
 		brandingTitle = 'CHEKIYUUME',
 		brandingSubtitle = 'PHOTOBOOTH STUDIO',
-		fps = 30,
+		fps = 24,
 		isMirrored = true,
 		countdownSeconds,
 		onProgress
@@ -146,7 +269,7 @@ export async function compileSequentialVideostrip(
 	const photoMap = new Map<string, PhotoItem>();
 	photos.forEach((p) => photoMap.set(p.id, p));
 
-	// Preload all still images & video elements
+	// Preload images and videos
 	const preloadedImages = new Map<number, HTMLImageElement>();
 	const preloadedVideos = new Map<number, HTMLVideoElement>();
 	const activeSlots: number[] = [];
@@ -158,8 +281,8 @@ export async function compileSequentialVideostrip(
 		if (photo?.dataUrl) {
 			try {
 				const img = await loadImage(photo.dataUrl);
-				preloadedImages.set(i, img);
-			} catch (e) {}
+				if (img.width > 0) preloadedImages.set(i, img);
+			} catch (_) {}
 		}
 
 		if (photo?.btsVideoUrl) {
@@ -167,8 +290,10 @@ export async function compileSequentialVideostrip(
 				const vid = await createVideoElement(photo.btsVideoUrl);
 				preloadedVideos.set(i, vid);
 				activeSlots.push(i);
-			} catch (e) {}
-		} else if (photo?.dataUrl) {
+			} catch (_) {
+				if (preloadedImages.has(i)) activeSlots.push(i);
+			}
+		} else if (preloadedImages.has(i)) {
 			activeSlots.push(i);
 		}
 	}
@@ -177,38 +302,31 @@ export async function compileSequentialVideostrip(
 		for (let i = 0; i < numSlots; i++) activeSlots.push(i);
 	}
 
-	// Preload overlay & background images if present
+	// Preload overlay / background
 	let overlayImg: HTMLImageElement | null = null;
 	if (layout.overlayUrl) {
-		try {
-			overlayImg = await loadImage(layout.overlayUrl);
-		} catch (e) {}
+		try { overlayImg = await loadImage(layout.overlayUrl); } catch (_) {}
 	}
-
 	let bgImg: HTMLImageElement | null = null;
 	if (layout.backgroundUrl) {
-		try {
-			bgImg = await loadImage(layout.backgroundUrl);
-		} catch (e) {}
+		try { bgImg = await loadImage(layout.backgroundUrl); } catch (_) {}
 	}
 
-	// Determine segment duration: match countdownSeconds (default: 5s)
+	// Timing
 	const segmentDuration = (countdownSeconds && Number.isFinite(countdownSeconds) && countdownSeconds > 0)
 		? countdownSeconds
-		: 5.0;
+		: 3.0;
 
-	// Set playbackRate safely (guard against WebM Infinity/NaN duration)
+	// Compute playback rates for BTS videos
 	preloadedVideos.forEach((vid) => {
-		try {
-			if (Number.isFinite(vid.duration) && vid.duration > 0 && segmentDuration > 0) {
-				const rate = vid.duration / segmentDuration;
-				if (Number.isFinite(rate) && rate > 0.1 && rate < 10) {
-					vid.playbackRate = rate;
-					return;
-				}
+		if (Number.isFinite(vid.duration) && vid.duration > 0 && segmentDuration > 0) {
+			const rate = vid.duration / segmentDuration;
+			if (Number.isFinite(rate) && rate > 0.1 && rate < 16) {
+				vid.playbackRate = rate;
+			} else {
+				vid.playbackRate = 1.0;
 			}
-			vid.playbackRate = 1.0;
-		} catch (e) {
+		} else {
 			vid.playbackRate = 1.0;
 		}
 	});
@@ -216,376 +334,206 @@ export async function compileSequentialVideostrip(
 	let loopCount = 1;
 	if (activeSlots.length === 1) loopCount = 3;
 	else if (activeSlots.length === 2) loopCount = 2;
-	else loopCount = 1;
 
 	const singlePassDuration = segmentDuration * activeSlots.length;
 	const totalDuration = singlePassDuration * loopCount;
+	const frameIntervalMs = 1000 / fps;
+	const totalFrames = Math.ceil(totalDuration * fps);
 
+	// Canvas dimensions (cap at 1280px, ensure even integers)
 	const origWidth = layout.canvasWidth;
 	const origHeight = layout.canvasHeight;
-	const evenWidth = origWidth % 2 === 0 ? origWidth : origWidth - 1;
-	const evenHeight = origHeight % 2 === 0 ? origHeight : origHeight - 1;
+	let evenWidth = origWidth % 2 === 0 ? origWidth : origWidth - 1;
+	let evenHeight = origHeight % 2 === 0 ? origHeight : origHeight - 1;
+	const MAX_DIMENSION = 1280;
+	let scaleFactor = 1;
+	if (evenWidth > MAX_DIMENSION || evenHeight > MAX_DIMENSION) {
+		scaleFactor = Math.min(MAX_DIMENSION / evenWidth, MAX_DIMENSION / evenHeight);
+	}
+	let canvasWidth = Math.round(evenWidth * scaleFactor);
+	let canvasHeight = Math.round(evenHeight * scaleFactor);
+	if (canvasWidth % 2 !== 0) canvasWidth--;
+	if (canvasHeight % 2 !== 0) canvasHeight--;
 
 	const canvas = document.createElement('canvas');
-	canvas.width = evenWidth;
-	canvas.height = evenHeight;
+	canvas.width = canvasWidth;
+	canvas.height = canvasHeight;
 	const ctx = canvas.getContext('2d', { alpha: false });
+	if (!ctx) throw new Error('Canvas 2D context creation failed');
 
-	if (!ctx) {
-		throw new Error('Canvas 2D context creation failed');
+	const baseDrawOpts = {
+		ctx, origWidth, origHeight, scaleFactor, canvasWidth, canvasHeight,
+		layout, numSlots, activeSlots, segmentDuration, singlePassDuration,
+		preloadedImages, preloadedVideos,
+		overlayImg, bgImg, stickers, isMirrored,
+		brandingTitle, brandingSubtitle, guestName
+	};
+
+	/**
+	 * Determine which slot is active and seek its BTS video to the correct position.
+	 * Returns { activeSlotIndex, activeSlot }.
+	 */
+	async function prepareFrame(elapsed: number): Promise<{ activeSlotIndex: number; activeSlot: number }> {
+		const elapsedInPass = elapsed % singlePassDuration;
+		const activeSlotIndex = Math.min(
+			Math.floor(elapsedInPass / segmentDuration),
+			activeSlots.length - 1
+		);
+		const activeSlot = activeSlots[activeSlotIndex];
+
+		const vid = preloadedVideos.get(activeSlot);
+		if (vid) {
+			// Compute exact position within this segment in the video's own time
+			const elapsedInSegment = elapsedInPass - activeSlotIndex * segmentDuration;
+			const targetTime = elapsedInSegment * (vid.playbackRate || 1);
+			await seekVideoTo(vid, targetTime);
+		}
+
+		return { activeSlotIndex, activeSlot };
 	}
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// WebCodecs path
+	// ─────────────────────────────────────────────────────────────────────────
 	if (isWebCodecsSupported()) {
 		try {
 			const AVC_LEVELS = [
-				{ codec: 'avc1.640033', label: '5.1', maxPixels: 9_437_184 },
-				{ codec: 'avc1.640032', label: '5.0', maxPixels: 5_652_480 },
-				{ codec: 'avc1.640028', label: '4.0', maxPixels: 2_097_152 }
+				'avc1.640028', // High 4.0
+				'avc1.4d0028', // Main 4.0
+				'avc1.42001f', // Baseline 3.1
 			];
-
-			let chosenCodec = AVC_LEVELS[0].codec;
-			let scaleFactor = 1;
-
-			for (const level of AVC_LEVELS) {
-				const totalPixels = evenWidth * evenHeight;
-				if (totalPixels <= level.maxPixels) {
-					try {
-						const support = await VideoEncoder.isConfigSupported({
-							codec: level.codec,
-							width: evenWidth,
-							height: evenHeight,
-							bitrate: 6_000_000,
-							framerate: fps
-						});
-						if (support.supported) {
-							chosenCodec = level.codec;
-							scaleFactor = 1;
-							break;
-						}
-					} catch (_) {}
-				}
-
-				if (level === AVC_LEVELS[AVC_LEVELS.length - 1]) {
-					const MAX_DIMENSION = 1080;
-					if (evenWidth > MAX_DIMENSION || evenHeight > MAX_DIMENSION) {
-						scaleFactor = Math.min(MAX_DIMENSION / evenWidth, MAX_DIMENSION / evenHeight);
-					}
-					chosenCodec = level.codec;
-				}
+			let chosenCodec = AVC_LEVELS[0];
+			for (const codec of AVC_LEVELS) {
+				try {
+					const support = await VideoEncoder.isConfigSupported({
+						codec, width: canvasWidth, height: canvasHeight,
+						bitrate: 4_000_000, framerate: fps
+					});
+					if (support.supported) { chosenCodec = codec; break; }
+				} catch (_) {}
 			}
-
-			let targetWidth = Math.round(evenWidth * scaleFactor);
-			let targetHeight = Math.round(evenHeight * scaleFactor);
-			const canvasWidth = targetWidth % 2 === 0 ? targetWidth : targetWidth - 1;
-			const canvasHeight = targetHeight % 2 === 0 ? targetHeight : targetHeight - 1;
-
-			canvas.width = canvasWidth;
-			canvas.height = canvasHeight;
 
 			const target = new ArrayBufferTarget();
 			const muxer = new Muxer({
 				target,
-				video: {
-					codec: 'avc',
-					width: canvasWidth,
-					height: canvasHeight,
-					frameRate: fps
-				},
+				video: { codec: 'avc', width: canvasWidth, height: canvasHeight, frameRate: fps },
 				fastStart: 'in-memory',
 				firstTimestampBehavior: 'offset'
 			});
 
-			let encoderFailed = false;
+			let encoderError: Error | null = null;
 			const encoder = new VideoEncoder({
 				output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-				error: (e) => {
-					console.error('VideoEncoder error:', e);
-					encoderFailed = true;
-				}
+				error: (e) => { encoderError = e; }
 			});
 
 			encoder.configure({
 				codec: chosenCodec,
 				width: canvasWidth,
 				height: canvasHeight,
-				bitrate: 5_000_000,
+				bitrate: 4_000_000,
 				framerate: fps
 			});
 
-			// Start all videos upfront
-			preloadedVideos.forEach((v) => {
-				v.currentTime = 0;
-				v.play().catch(() => {});
-			});
-			await new Promise((r) => setTimeout(r, 120));
+			// Encode all frames sequentially, seeking BTS video to the correct position each frame
+			for (let f = 0; f < totalFrames; f++) {
+				if (encoderError) throw encoderError;
 
-			const blob = await new Promise<Blob>((resolve, reject) => {
-				const startTime = performance.now();
-				let prevActiveIndex = -1;
-				let frameCount = 0;
-				const frameInterval = 1000 / fps;
-				let lastFrameTime = 0;
+				const elapsedMs = f * frameIntervalMs;
+				const elapsed = elapsedMs / 1000;
 
-				function drawFrame() {
-					try {
-						if (encoderFailed) {
-							preloadedVideos.forEach((v) => v.pause());
-							try { encoder.close(); } catch (_) {}
-							throw new Error('VideoEncoder failed');
-						}
+				const { activeSlotIndex, activeSlot } = await prepareFrame(elapsed);
 
-						const elapsed = (performance.now() - startTime) / 1000;
-						const nowMs = performance.now() - startTime;
+				drawCompositeFrame({ ...baseDrawOpts, elapsed, activeSlotIndex, activeSlot });
 
-						if (nowMs - lastFrameTime < frameInterval * 0.8) {
-							if (elapsed < totalDuration) {
-								requestAnimationFrame(drawFrame);
-							} else {
-								finishEncoding();
-							}
-							return;
-						}
-						lastFrameTime = nowMs;
-
-						const elapsedInPass = elapsed % singlePassDuration;
-						const currentActiveIndex = Math.min(
-							Math.floor(elapsedInPass / segmentDuration),
-							activeSlots.length - 1
-						);
-						const activeSlot = activeSlots[currentActiveIndex];
-
-						// Reset video when segment changes
-						if (currentActiveIndex !== prevActiveIndex) {
-							const vid = preloadedVideos.get(activeSlot);
-							if (vid) {
-								vid.currentTime = 0;
-								vid.play().catch(() => {});
-							}
-							prevActiveIndex = currentActiveIndex;
-						}
-
-						ctx.save();
-						if (scaleFactor !== 1) {
-							ctx.scale(canvasWidth / origWidth, canvasHeight / origHeight);
-						}
-
-						// 1. Background
-						ctx.fillStyle = layout.backgroundColor || '#FFFFFF';
-						ctx.fillRect(0, 0, origWidth, origHeight);
-
-						if (bgImg) {
-							ctx.drawImage(bgImg, 0, 0, origWidth, origHeight);
-						}
-
-						// 2. Draw Each Slot
-						for (let i = 0; i < numSlots; i++) {
-							const slot = layout.slots[i];
-							if (i === activeSlot) {
-								const video = preloadedVideos.get(i);
-								if (video && video.readyState >= 2) {
-									drawToSlot(ctx, video, slot, isMirrored);
-								} else {
-									const photo = preloadedImages.get(i);
-									if (photo) drawToSlot(ctx, photo, slot, false);
-								}
-							} else {
-								const photo = preloadedImages.get(i);
-								if (photo) drawToSlot(ctx, photo, slot, false);
-							}
-						}
-
-						// 3. Draw Overlay Artwork
-						if (overlayImg) {
-							ctx.drawImage(overlayImg, 0, 0, origWidth, origHeight);
-						}
-
-						// 4. Draw Stickers (if any)
-						if (stickers && stickers.length > 0) {
-							for (const st of stickers) {
-								ctx.save();
-								const px = (st.x / 100) * origWidth;
-								const py = (st.y / 100) * origHeight;
-								ctx.translate(px, py);
-								if (st.rotation) {
-									ctx.rotate((st.rotation * Math.PI) / 180);
-								}
-								ctx.font = `${st.size || 80}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
-								ctx.textAlign = 'center';
-								ctx.textBaseline = 'middle';
-								ctx.fillText(st.emoji, 0, 0);
-								ctx.restore();
-							}
-						}
-
-						// 5. Draw Branding Footer (if no overlay)
-						if (!overlayImg) {
-							const isDarkBg = layout.backgroundColor.toLowerCase() === '#18181b' || layout.backgroundColor.toLowerCase() === '#000000';
-							const textColor = isDarkBg ? '#F4F4F5' : '#18181B';
-							const subTextColor = isDarkBg ? '#A1A1AA' : '#71717A';
-							const footerTop = layout.canvasHeight - layout.footerHeight;
-							const centerX = layout.canvasWidth / 2;
-
-							ctx.save();
-							ctx.fillStyle = textColor;
-							ctx.font = '800 48px "Outfit", sans-serif';
-							ctx.textAlign = 'center';
-							ctx.letterSpacing = '4px';
-							ctx.fillText(brandingTitle.toUpperCase(), centerX, footerTop + 90);
-
-							ctx.fillStyle = subTextColor;
-							ctx.font = '600 24px "Plus Jakarta Sans", sans-serif';
-							ctx.letterSpacing = '2px';
-							const displaySub = guestName ? `${guestName.toUpperCase()} • ${brandingSubtitle.toUpperCase()}` : brandingSubtitle.toUpperCase();
-							ctx.fillText(displaySub, centerX, footerTop + 140);
-							ctx.restore();
-						}
-
-						ctx.restore();
-
-						// 5. Encode Frame
-						try {
-							const timestampMicros = Math.round(elapsed * 1_000_000);
-							const frame = new VideoFrame(canvas, { timestamp: timestampMicros });
-							const isKeyFrame = frameCount % (fps * 2) === 0;
-							encoder.encode(frame, { keyFrame: isKeyFrame });
-							frame.close();
-							frameCount++;
-						} catch (e) {
-							console.warn('Frame encode error:', e);
-						}
-
-						if (onProgress) {
-							onProgress(Math.min(98, Math.round((elapsed / totalDuration) * 100)));
-						}
-
-						if (elapsed < totalDuration) {
-							requestAnimationFrame(drawFrame);
-						} else {
-							finishEncoding();
-						}
-
-						function finishEncoding() {
-							preloadedVideos.forEach((v) => v.pause());
-							encoder.flush().then(() => {
-								encoder.close();
-								muxer.finalize();
-								const mp4Blob = new Blob([target.buffer], { type: 'video/mp4' });
-								resolve(mp4Blob);
-							}).catch(reject);
-						}
-					} catch (err) {
-						preloadedVideos.forEach((v) => v.pause());
-						try { encoder.close(); } catch (_) {}
-						reject(err);
-					}
+				try {
+					const timestampMicros = Math.round(elapsedMs * 1000);
+					const frame = new VideoFrame(canvas, { timestamp: timestampMicros });
+					encoder.encode(frame, { keyFrame: f % (fps * 2) === 0 });
+					frame.close();
+				} catch (e) {
+					console.warn('[VideoCompiler] Frame encode error:', e);
 				}
 
-				requestAnimationFrame(drawFrame);
-			});
+				if (onProgress) {
+					onProgress(Math.min(97, Math.round(((f + 1) / totalFrames) * 100)));
+				}
 
+				// Yield to browser every 8 frames to prevent UI lockup and allow Android WebView to breathe
+				if (f % 8 === 0) {
+					await new Promise((r) => setTimeout(r, 0));
+				}
+			}
+
+			await encoder.flush();
+			encoder.close();
+			muxer.finalize();
+
+			if (onProgress) onProgress(100);
+
+			const blob = new Blob([target.buffer], { type: 'video/mp4' });
 			const url = URL.createObjectURL(blob);
 			return { blob, url };
 		} catch (err) {
-			console.warn('[VideoCompiler] WebCodecs live compile failed, falling back to MediaRecorder', err);
+			console.warn('[VideoCompiler] WebCodecs path failed, falling back to MediaRecorder:', err);
 		}
 	}
 
-	// Fallback to MediaRecorder WebM
-	return new Promise((resolve) => {
-		const stream = canvas.captureStream(fps);
+	// ─────────────────────────────────────────────────────────────────────────
+	// Fallback: MediaRecorder with explicit frame capture via requestFrame()
+	// ─────────────────────────────────────────────────────────────────────────
+	return new Promise((resolve, reject) => {
+		// captureStream(0) = we control exactly when frames are captured
+		const stream = canvas.captureStream(0);
+		const videoTrack = stream.getVideoTracks()[0];
+
+		const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+			? 'video/webm;codecs=vp9'
+			: 'video/webm';
+		const recorder = new MediaRecorder(stream, { mimeType });
 		const chunks: Blob[] = [];
-		const recorder = new MediaRecorder(stream, {
-			mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-				? 'video/webm;codecs=vp9'
-				: 'video/webm'
-		});
 
 		recorder.ondataavailable = (e) => {
 			if (e.data && e.data.size > 0) chunks.push(e.data);
 		};
-
 		recorder.onstop = () => {
+			if (chunks.length === 0) { reject(new Error('MediaRecorder: no chunks')); return; }
 			const blob = new Blob(chunks, { type: 'video/webm' });
-			const url = URL.createObjectURL(blob);
-			resolve({ blob, url });
+			resolve({ blob, url: URL.createObjectURL(blob) });
 		};
-
-		preloadedVideos.forEach((v) => {
-			v.currentTime = 0;
-			v.play().catch(() => {});
-		});
-
+		recorder.onerror = (e) => reject(e);
 		recorder.start();
-		let startTime = performance.now();
-		let prevActiveIndex = -1;
 
-		function drawFallbackFrame() {
-			const elapsed = (performance.now() - startTime) / 1000;
-			const elapsedInPass = elapsed % singlePassDuration;
-			const currentActiveIndex = Math.min(
-				Math.floor(elapsedInPass / segmentDuration),
-				activeSlots.length - 1
-			);
-			const activeSlot = activeSlots[currentActiveIndex];
+		(async () => {
+			try {
+				for (let f = 0; f < totalFrames; f++) {
+					const elapsedMs = f * frameIntervalMs;
+					const elapsed = elapsedMs / 1000;
 
-			if (currentActiveIndex !== prevActiveIndex) {
-				const vid = preloadedVideos.get(activeSlot);
-				if (vid) {
-					vid.currentTime = 0;
-					vid.play().catch(() => {});
-				}
-				prevActiveIndex = currentActiveIndex;
-			}
+					const { activeSlotIndex, activeSlot } = await prepareFrame(elapsed);
+					drawCompositeFrame({ ...baseDrawOpts, elapsed, activeSlotIndex, activeSlot });
 
-			ctx.fillStyle = layout.backgroundColor || '#FFFFFF';
-			ctx.fillRect(0, 0, origWidth, origHeight);
-
-			for (let i = 0; i < numSlots; i++) {
-				const slot = layout.slots[i];
-				if (i === activeSlot) {
-					const video = preloadedVideos.get(i);
-					if (video && video.readyState >= 2) {
-						drawToSlot(ctx, video, slot, isMirrored);
-					} else {
-						const photo = preloadedImages.get(i);
-						if (photo) drawToSlot(ctx, photo, slot, false);
+					// Explicitly capture this canvas frame into the MediaRecorder stream
+					if (videoTrack && typeof (videoTrack as MediaStreamTrack & { requestFrame?: () => void }).requestFrame === 'function') {
+						(videoTrack as MediaStreamTrack & { requestFrame: () => void }).requestFrame();
 					}
-				} else {
-					const photo = preloadedImages.get(i);
-					if (photo) drawToSlot(ctx, photo, slot, false);
-				}
-			}
 
-			if (overlayImg) {
-				ctx.drawImage(overlayImg, 0, 0, origWidth, origHeight);
-			}
-
-			// Draw Stickers in fallback
-			if (stickers && stickers.length > 0) {
-				for (const st of stickers) {
-					ctx.save();
-					const px = (st.x / 100) * origWidth;
-					const py = (st.y / 100) * origHeight;
-					ctx.translate(px, py);
-					if (st.rotation) {
-						ctx.rotate((st.rotation * Math.PI) / 180);
+					if (onProgress) {
+						onProgress(Math.min(97, Math.round(((f + 1) / totalFrames) * 100)));
 					}
-					ctx.font = `${st.size || 80}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
-					ctx.textAlign = 'center';
-					ctx.textBaseline = 'middle';
-					ctx.fillText(st.emoji, 0, 0);
-					ctx.restore();
+
+					// Yield every 8 frames
+					if (f % 8 === 0) {
+						await new Promise((r) => setTimeout(r, 0));
+					}
 				}
-			}
 
-			if (elapsed < totalDuration) {
-				requestAnimationFrame(drawFallbackFrame);
-			} else {
-				preloadedVideos.forEach((v) => v.pause());
-				setTimeout(() => recorder.stop(), 100);
+				if (onProgress) onProgress(100);
+				await new Promise((r) => setTimeout(r, 200));
+				try { recorder.stop(); } catch (_) {}
+			} catch (err) {
+				reject(err);
 			}
-		}
-
-		requestAnimationFrame(drawFallbackFrame);
+		})();
 	});
 }

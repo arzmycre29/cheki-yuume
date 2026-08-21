@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { sessionStore } from '$lib/stores/session';
 	import { settingsStore } from '$lib/stores/settings';
 	import { customFramesStore } from '$lib/stores/customFrames';
 	import { cameraService, type VideoDeviceInfo } from '$lib/services/camera';
+	import { uvcCameraService, type UvcCaptureResult } from '$lib/services/uvcCamera';
 	import {
 		getAllSessionsFromDB,
 		deleteSessionFromDB,
@@ -41,7 +43,9 @@
 		CheckSquare,
 		Square,
 		Layers,
-		AlertTriangle
+		AlertTriangle,
+		Usb,
+		ShieldAlert
 	} from '@lucide/svelte';
 
 	let activeTab = $state<'general' | 'camera' | 'cloud' | 'sessions' | 'frames'>('sessions');
@@ -52,12 +56,26 @@
 	let testVideoElement: HTMLVideoElement | null = $state(null);
 	let isTestingCamera = $state(false);
 
+	// UVC Test State
+	let isTestingUvc = $state(false);
+	let uvcTestResult = $state<UvcCaptureResult | null>(null);
+
 	// Session logs state
 	let sessions = $state<SessionData[]>([]);
 	let searchQuery = $state('');
 	let rePrintSession = $state<SessionData | null>(null);
 	let isRePrintModalOpen = $state(false);
 	let saveMessage = $state('');
+
+	let filteredSessions = $derived(
+		sessions.filter((s) => {
+			const q = searchQuery.toLowerCase();
+			return (
+				s.sessionId.toLowerCase().includes(q) ||
+				(s.guestName && s.guestName.toLowerCase().includes(q))
+			);
+		})
+	);
 
 	// Custom Frame Management state
 	let frameFilterSlot = $state<number | 'all'>('all');
@@ -75,6 +93,17 @@
 		formSettings = { ...$settingsStore };
 		await loadSessions();
 		await refreshCameras();
+
+		if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+			navigator.mediaDevices.addEventListener('devicechange', refreshCameras);
+		}
+	});
+
+	onDestroy(() => {
+		if (typeof navigator !== 'undefined' && navigator.mediaDevices?.removeEventListener) {
+			navigator.mediaDevices.removeEventListener('devicechange', refreshCameras);
+		}
+		stopCameraTest();
 	});
 
 	async function loadSessions() {
@@ -104,6 +133,28 @@
 	function stopCameraTest() {
 		cameraService.stopStream();
 		isTestingCamera = false;
+	}
+
+	async function testUvcCamera() {
+		isTestingUvc = true;
+		uvcTestResult = null;
+		try {
+			const res = await uvcCameraService.capturePhoto(false);
+			uvcTestResult = res;
+		} catch (err: any) {
+			uvcTestResult = {
+				success: false,
+				dataUrl: null,
+				blob: null,
+				statusCode: -1,
+				statusCodeDesc: 'ERROR',
+				exitCode: 'plugin_exception',
+				message: err?.message || 'Gagal menjalankan tes UVC',
+				diagnosticInfo: String(err)
+			};
+		} finally {
+			isTestingUvc = false;
+		}
 	}
 
 	function handleSaveSettings() {
@@ -333,15 +384,22 @@
 		}
 	}
 
-	let filteredSessions = $derived(
-		sessions.filter((s) => {
-			const q = searchQuery.toLowerCase();
-			return (
-				s.sessionId.toLowerCase().includes(q) ||
-				(s.guestName && s.guestName.toLowerCase().includes(q))
-			);
-		})
-	);
+	async function handleExportZip(session: SessionData) {
+		try {
+			const blob = await createSessionExportZip(session);
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `ChekiYuume_${session.guestName || 'Guest'}_${session.sessionId}.zip`;
+			a.click();
+			URL.revokeObjectURL(url);
+			saveMessage = `Berhasil mengunduh ZIP sesi ${session.sessionId}!`;
+			setTimeout(() => (saveMessage = ''), 3000);
+		} catch (err) {
+			console.error('Export ZIP failed:', err);
+			alert('Gagal mengunduh file ZIP sesi.');
+		}
+	}
 
 	let filteredFrames = $derived(
 		allFrames.filter((f) => {
@@ -774,109 +832,266 @@
 			<!-- Tab 3: Camera Settings -->
 			<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 				<div class="flex flex-col gap-5 bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl">
-					<h2 class="text-lg font-bold text-white font-display">Pengaturan Perangkat Kamera</h2>
-
-					<div>
-						<label for="camera-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Pilih Kamera</label>
-						<select
-							id="camera-select"
-							bind:value={formSettings.cameraDeviceId}
-							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
-						>
-							<option value="">Default OS / Browser Camera</option>
-							{#each cameras as cam}
-								<option value={cam.deviceId}>{cam.label}</option>
-							{/each}
-						</select>
+					<div class="flex items-center justify-between">
+						<h2 class="text-lg font-bold text-white font-display">Pengaturan Sumber Kamera</h2>
+						{#if formSettings.cameraSource === 'internal'}
+							<button
+								type="button"
+								onclick={refreshCameras}
+								class="flex items-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-xs font-bold text-rose-400 border border-zinc-700 cursor-pointer active:scale-95 transition-all"
+								title="Pindai ulang kamera yang terhubung"
+							>
+								<RefreshCw class="h-3.5 w-3.5" />
+								<span>Pindai Ulang ({cameras.length})</span>
+							</button>
+						{/if}
 					</div>
 
+					<!-- Camera Mode Selector (Internal WebRTC vs External USB UVC) -->
 					<div>
-						<div class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Resolusi Capture</div>
-						<div class="grid grid-cols-3 gap-2">
+						<span class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Tipe Kamera yang Digunakan</span>
+						<div class="grid grid-cols-2 gap-3">
 							<button
 								type="button"
-								onclick={() => (formSettings.cameraResolution = '720p')}
-								class="rounded-xl py-2.5 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraResolution === '720p' ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
+								onclick={() => (formSettings.cameraSource = 'internal')}
+								class="flex items-center justify-center gap-2 rounded-2xl py-3 px-3 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraSource !== 'uvc' ? 'bg-rose-500/20 border-rose-500 text-rose-300 shadow-md' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'}"
 							>
-								720p HD
+								<Camera class="h-4 w-4" />
+								<span>Kamera Internal (WebRTC)</span>
 							</button>
 							<button
 								type="button"
-								onclick={() => (formSettings.cameraResolution = '1080p')}
-								class="rounded-xl py-2.5 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraResolution === '1080p' ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
+								onclick={() => (formSettings.cameraSource = 'uvc')}
+								class="flex items-center justify-center gap-2 rounded-2xl py-3 px-3 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraSource === 'uvc' ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300 shadow-md' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'}"
 							>
-								1080p FHD (Standar)
-							</button>
-							<button
-								type="button"
-								onclick={() => (formSettings.cameraResolution = '4k')}
-								class="rounded-xl py-2.5 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraResolution === '4k' ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
-							>
-								4K UHD
+								<Usb class="h-4 w-4" />
+								<span>Kamera USB / UVC (Native OTG)</span>
 							</button>
 						</div>
 					</div>
 
-					<div class="flex items-center justify-between py-2 border-t border-zinc-800">
+					{#if formSettings.cameraSource === 'uvc'}
+						<!-- UVC Mode Details & Tips -->
+						<div class="rounded-2xl bg-indigo-950/40 border border-indigo-500/30 p-4 text-[11px] text-zinc-300 leading-relaxed space-y-2">
+							<div class="flex items-center gap-2 font-bold text-indigo-400 text-xs">
+								<Usb class="h-4 w-4" />
+								<span>Mode Kamera USB / UVC Aktif (Android OTG)</span>
+							</div>
+							<p class="text-zinc-300">
+								Pada mode ini, foto photobooth akan diambil langsung melalui native driver USB Camera OTG (bukan melalui WebRTC WebView).
+							</p>
+							<ul class="list-disc list-inside text-zinc-400 space-y-1">
+								<li>Pastikan fitur <strong>OTG Connection</strong> diaktifkan di menu Pengaturan Android jika HP/Tablet memilikinya.</li>
+								<li>Saat pertama kali membuka kamera, Android akan memunculkan popup izin akses USB. Pilih <strong>"Izinkan / Selalu Buka"</strong>.</li>
+							</ul>
+						</div>
+					{:else}
+						<!-- Internal Camera Config -->
 						<div>
-							<span class="text-xs font-bold text-white">Cermin Kamera (Mirroring)</span>
-							<p class="text-[11px] text-zinc-400">Membuat preview kamera seperti cermin selfie</p>
+							<label for="camera-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Pilih Perangkat Kamera Internal</label>
+							<select
+								id="camera-select"
+								bind:value={formSettings.cameraDeviceId}
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							>
+								<option value="">Default OS / Browser Camera</option>
+								{#each cameras as cam}
+									<option value={cam.deviceId}>{cam.label}</option>
+								{/each}
+							</select>
 						</div>
-						<input
-							type="checkbox"
-							bind:checked={formSettings.isMirrored}
-							class="h-5 w-5 rounded-md accent-rose-500 cursor-pointer"
-						/>
-					</div>
+
+						<div>
+							<div class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Resolusi Capture</div>
+							<div class="grid grid-cols-3 gap-2">
+								<button
+									type="button"
+									onclick={() => (formSettings.cameraResolution = '720p')}
+									class="rounded-xl py-2.5 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraResolution === '720p' ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
+								>
+									720p HD
+								</button>
+								<button
+									type="button"
+									onclick={() => (formSettings.cameraResolution = '1080p')}
+									class="rounded-xl py-2.5 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraResolution === '1080p' ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
+								>
+									1080p FHD
+								</button>
+								<button
+									type="button"
+									onclick={() => (formSettings.cameraResolution = '4k')}
+									class="rounded-xl py-2.5 text-xs font-bold border transition-all cursor-pointer {formSettings.cameraResolution === '4k' ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'}"
+								>
+									4K UHD
+								</button>
+							</div>
+						</div>
+
+						<div class="flex items-center justify-between py-2 border-t border-zinc-800">
+							<div>
+								<span class="text-xs font-bold text-white">Cermin Kamera (Mirroring)</span>
+								<p class="text-[11px] text-zinc-400">Membuat preview kamera seperti cermin selfie</p>
+							</div>
+							<input
+								type="checkbox"
+								bind:checked={formSettings.isMirrored}
+								class="h-5 w-5 rounded-md accent-rose-500 cursor-pointer"
+							/>
+						</div>
+					{/if}
 
 					<button
 						type="button"
 						onclick={handleSaveSettings}
-						class="w-full flex items-center justify-center gap-2 rounded-2xl bg-rose-500 hover:bg-rose-600 py-3.5 text-xs font-bold text-white shadow-lg shadow-rose-500/20 transition-all cursor-pointer mt-4"
+						class="w-full flex items-center justify-center gap-2 rounded-2xl bg-rose-500 hover:bg-rose-600 py-3.5 text-xs font-bold text-white shadow-lg shadow-rose-500/20 transition-all cursor-pointer mt-2"
 					>
 						<Save class="h-4 w-4" />
 						<span>Simpan Pengaturan Kamera</span>
 					</button>
 				</div>
 
-				<!-- Live Camera Tester -->
+				<!-- Live Camera / UVC Tester -->
 				<div class="flex flex-col bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl">
-					<div class="flex items-center justify-between mb-4">
-						<h2 class="text-lg font-bold text-white font-display">Uji Coba Stream Kamera</h2>
-						{#if isTestingCamera}
+					{#if formSettings.cameraSource === 'uvc'}
+						<!-- UVC Dedicated Tester with Diagnostics -->
+						<div class="flex items-center justify-between mb-4">
+							<h2 class="text-lg font-bold text-white font-display">Uji Diagnostik Kamera USB (UVC)</h2>
 							<button
 								type="button"
-								onclick={stopCameraTest}
-								class="rounded-xl bg-red-500/20 border border-red-500/30 px-3 py-1 text-xs font-bold text-red-300 cursor-pointer"
+								disabled={isTestingUvc}
+								onclick={testUvcCamera}
+								class="flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 cursor-pointer transition-all active:scale-95"
 							>
-								Hentikan Uji
+								{#if isTestingUvc}
+									<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+									<span>Memanggil Kamera USB...</span>
+								{:else}
+									<Usb class="h-3.5 w-3.5" />
+									<span>Uji Ambil Foto UVC</span>
+								{/if}
 							</button>
-						{:else}
-							<button
-								type="button"
-								onclick={startCameraTest}
-								class="rounded-xl bg-emerald-500/20 border border-emerald-500/30 px-3 py-1 text-xs font-bold text-emerald-300 cursor-pointer"
-							>
-								Mulai Uji Kamera
-							</button>
-						{/if}
-					</div>
+						</div>
 
-					<div class="relative flex-1 min-h-[300px] rounded-2xl bg-black overflow-hidden border border-zinc-800 flex items-center justify-center">
-						<video
-							bind:this={testVideoElement}
-							autoplay
-							playsinline
-							muted
-							class="h-full w-full object-cover {formSettings.isMirrored ? '-scale-x-100' : 'scale-x-100'}"
-						></video>
-						{#if !isTestingCamera}
-							<div class="absolute text-center text-zinc-500 text-xs">
-								<Camera class="h-8 w-8 mx-auto mb-2 opacity-50" />
-								<span>Klik "Mulai Uji Kamera" untuk melihat live feed</span>
-							</div>
-						{/if}
-					</div>
+						<div class="relative flex-1 min-h-[300px] rounded-2xl bg-zinc-950 p-5 overflow-hidden border border-zinc-800 flex flex-col items-center justify-center text-center">
+							{#if isTestingUvc}
+								<div class="flex flex-col items-center gap-3">
+									<RefreshCw class="h-10 w-10 text-indigo-400 animate-spin" />
+									<p class="text-xs text-zinc-300 font-bold">Membuka antarmuka kamera USB native...</p>
+								</div>
+							{:else if uvcTestResult}
+								<!-- Diagnostic Result Card -->
+								<div class="w-full flex flex-col items-center gap-3 animate-in fade-in duration-200">
+									<div class="flex items-center gap-2">
+										{#if uvcTestResult.success}
+											<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+												<CheckCircle2 class="h-6 w-6" />
+											</div>
+										{:else}
+											<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+												<ShieldAlert class="h-6 w-6" />
+											</div>
+										{/if}
+										<div class="text-left">
+											<h4 class="text-sm font-bold text-white font-display">
+												{uvcTestResult.success ? 'Kamera USB Terdeteksi & Berhasil' : 'Kamera USB Belum Berhasil'}
+											</h4>
+											<span class="text-[11px] font-mono font-bold {uvcTestResult.success ? 'text-emerald-400' : 'text-amber-400'}">
+												Status: {uvcTestResult.statusCode} • Exit: {uvcTestResult.exitCode}
+											</span>
+										</div>
+									</div>
+
+									<div class="w-full rounded-xl bg-zinc-950 border border-zinc-800 p-3 text-left max-h-56 overflow-y-auto">
+										<pre class="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed">
+{uvcTestResult.diagnosticInfo}
+										</pre>
+									</div>
+
+									<div class="flex gap-2 w-full">
+										<button
+											type="button"
+											onclick={() => {
+												try {
+													navigator.clipboard.writeText(`UVC Diagnostic Report [${uvcTestResult?.exitCode}]:\n${uvcTestResult?.diagnosticInfo}`);
+													alert('Laporan diagnostik berhasil disalin ke clipboard!');
+												} catch (_) {}
+											}}
+											class="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 py-2 text-xs font-bold text-white shadow-md transition-colors cursor-pointer"
+										>
+											📋 Salin Laporan Error
+										</button>
+										{#if uvcCameraService.getLatestNativeCrash()}
+											<button
+												type="button"
+												onclick={() => {
+													const crash = uvcCameraService.getLatestNativeCrash();
+													if (crash) {
+														navigator.clipboard.writeText(`[Fatal Crash Log]:\n${crash}`);
+														alert('Fatal Crash Log disalin!');
+													}
+												}}
+												class="rounded-xl bg-rose-600/80 hover:bg-rose-500 py-2 px-3 text-xs font-bold text-white shadow-md transition-colors cursor-pointer"
+											>
+												⚠️ Salin Crash Log
+											</button>
+										{/if}
+									</div>
+
+									{#if uvcTestResult.dataUrl}
+										<div class="w-full mt-2 flex flex-col items-center">
+											<span class="text-[10px] uppercase font-bold text-zinc-500 mb-1">Hasil Jepretan UVC:</span>
+											<img src={uvcTestResult.dataUrl} alt="UVC Test Snapshot" class="max-h-44 rounded-xl border border-zinc-700 shadow-md object-contain" />
+										</div>
+									{/if}
+								</div>
+							{:else}
+								<div class="text-center text-zinc-500 text-xs max-w-xs">
+									<Usb class="h-10 w-10 mx-auto mb-2 text-indigo-400/60" />
+									<p class="text-zinc-300 font-bold mb-1">Tes Kompatibilitas USB UVC</p>
+									<span>Klik tombol "Uji Ambil Foto UVC" di atas untuk memicu native bridge dan membaca status koneksi kamera OTG.</span>
+								</div>
+							{/if}
+						</div>
+					{:else}
+						<!-- Standard Internal Live Camera Tester -->
+						<div class="flex items-center justify-between mb-4">
+							<h2 class="text-lg font-bold text-white font-display">Uji Coba Stream Kamera</h2>
+							{#if isTestingCamera}
+								<button
+									type="button"
+									onclick={stopCameraTest}
+									class="rounded-xl bg-red-500/20 border border-red-500/30 px-3 py-1 text-xs font-bold text-red-300 cursor-pointer"
+								>
+									Hentikan Uji
+								</button>
+							{:else}
+								<button
+									type="button"
+									onclick={startCameraTest}
+									class="rounded-xl bg-emerald-500/20 border border-emerald-500/30 px-3 py-1 text-xs font-bold text-emerald-300 cursor-pointer"
+								>
+									Mulai Uji Kamera
+								</button>
+							{/if}
+						</div>
+
+						<div class="relative flex-1 min-h-[300px] rounded-2xl bg-black overflow-hidden border border-zinc-800 flex items-center justify-center">
+							<video
+								bind:this={testVideoElement}
+								autoplay
+								playsinline
+								muted
+								class="h-full w-full object-cover {formSettings.isMirrored ? '-scale-x-100' : 'scale-x-100'}"
+							></video>
+							{#if !isTestingCamera}
+								<div class="absolute text-center text-zinc-500 text-xs">
+									<Camera class="h-8 w-8 mx-auto mb-2 opacity-50" />
+									<span>Klik "Mulai Uji Kamera" untuk melihat live feed</span>
+								</div>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			</div>
 

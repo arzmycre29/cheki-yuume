@@ -1,5 +1,5 @@
 import { writable, get } from 'svelte/store';
-import type { SessionData, CaptureMode, PhotoItem } from '$lib/types';
+import type { SessionData, CaptureMode, PhotoItem, StickerItem } from '$lib/types';
 import { saveSessionToDB } from '$lib/services/db';
 import { getLayoutById } from '$lib/config/frameLayouts';
 
@@ -46,7 +46,7 @@ function loadStoredSession(): SessionData {
 		if (raw) {
 			const parsed = JSON.parse(raw);
 			if (parsed && parsed.sessionId) {
-				return { ...initialSession, ...parsed };
+				return { ...initialSession, ...parsed, photos: parsed.photos || [] };
 			}
 		}
 	} catch (e) {
@@ -58,7 +58,7 @@ function loadStoredSession(): SessionData {
 function persistToSessionStorage(session: SessionData) {
 	if (typeof window === 'undefined') return;
 	try {
-		// Only persist lightweight metadata to prevent quota crashes
+		// Save session metadata, stickers, and photos (lightweight dataUrl references without Blobs)
 		const persistable = {
 			sessionId: session.sessionId,
 			guestName: session.guestName,
@@ -66,11 +66,19 @@ function persistToSessionStorage(session: SessionData) {
 			mode: session.mode,
 			layoutId: session.layoutId,
 			assignedSlotPhotoIds: session.assignedSlotPhotoIds,
-			printCount: session.printCount
+			printCount: session.printCount,
+			stickers: session.stickers || [],
+			photostripDataUrl: session.photostripDataUrl || null,
+			photos: (session.photos || []).map((p) => ({
+				id: p.id,
+				index: p.index,
+				dataUrl: p.dataUrl,
+				timestamp: p.timestamp
+			}))
 		};
 		sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(persistable));
 	} catch (e) {
-		console.warn('[Session] Failed to save session metadata to sessionStorage', e);
+		console.warn('[Session] Failed to save session to sessionStorage', e);
 	}
 }
 
@@ -85,12 +93,13 @@ function createSessionStore() {
 				current = s;
 				return s;
 			});
-			if (current.sessionId && current.photos.length > 0) {
+			if (current.sessionId && current.photos && current.photos.length > 0) {
 				return current;
 			}
 			const stored = loadStoredSession();
 			if (stored.sessionId) {
-				const merged = { ...stored, photos: current.photos };
+				const mergedPhotos = (current.photos && current.photos.length > 0) ? current.photos : (stored.photos || []);
+				const merged: SessionData = { ...stored, photos: mergedPhotos };
 				set(merged);
 				return merged;
 			}

@@ -71,6 +71,7 @@ export interface SessionData {
 }
 
 export interface KioskSettings {
+	cameraSource?: 'internal' | 'uvc';
 	cameraDeviceId: string;
 	cameraResolution: '1080p' | '4k' | '720p';
 	isMirrored: boolean;

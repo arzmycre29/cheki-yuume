@@ -13,11 +13,24 @@ export class CameraService {
 			return [];
 		}
 		try {
-			const devices = await navigator.mediaDevices.enumerateDevices();
-			const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+			let devices = await navigator.mediaDevices.enumerateDevices();
+			let videoDevices = devices.filter((d) => d.kind === 'videoinput');
+
+			// If labels are empty, prompt getUserMedia once to unlock full device labels & external USB devices
+			if (videoDevices.length === 0 || videoDevices.every((d) => !d.label)) {
+				try {
+					const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+					devices = await navigator.mediaDevices.enumerateDevices();
+					videoDevices = devices.filter((d) => d.kind === 'videoinput');
+					tempStream.getTracks().forEach((t) => t.stop());
+				} catch (permErr) {
+					console.warn('[Camera] Permission request to unlock devices:', permErr);
+				}
+			}
+
 			return videoDevices.map((d, i) => ({
 				deviceId: d.deviceId,
-				label: d.label || `Kamera ${i + 1}`
+				label: d.label || `Kamera ${i + 1} (${d.deviceId.slice(0, 5)})`
 			}));
 		} catch (err) {
 			console.error('[Camera] Failed to list devices:', err);
@@ -27,7 +40,7 @@ export class CameraService {
 
 	async startStream(
 		deviceId?: string,
-		resolution: '1080p' | '4k' | '720p' = '1080p'
+		resolution: '1080p' | '4k' | '720p' = '720p'
 	): Promise<MediaStream> {
 		this.stopStream();
 
@@ -95,9 +108,10 @@ export class CameraService {
 		const sx = (vW - cropW) / 2;
 		const sy = (vH - cropH) / 2;
 
-		canvas.width = Math.round(cropW);
-		canvas.height = Math.round(cropH);
-		const ctx = canvas.getContext('2d');
+		// Maximum clean 1440x1080 or 1920x1440 canvas
+		canvas.width = Math.min(Math.round(cropW), 1440);
+		canvas.height = Math.round(canvas.width / targetAspect);
+		const ctx = canvas.getContext('2d', { alpha: false });
 
 		if (!ctx) {
 			throw new Error('Could not create 2D canvas context');
@@ -110,7 +124,7 @@ export class CameraService {
 
 		ctx.drawImage(videoElement, sx, sy, cropW, cropH, 0, 0, canvas.width, canvas.height);
 
-		const dataUrl = canvas.toDataURL('image/jpeg', 0.96);
+		const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 		const blobPromise = new Promise<Blob>((resolve, reject) => {
 			canvas.toBlob(
 				(b) => {
@@ -118,7 +132,7 @@ export class CameraService {
 					else reject(new Error('Failed to create photo blob'));
 				},
 				'image/jpeg',
-				0.96
+				0.92
 			);
 		});
 
@@ -133,17 +147,14 @@ export class CameraService {
 		this.recordedChunks = [];
 
 		try {
-			let mimeType = 'video/webm;codecs=vp9';
+			let mimeType = 'video/webm;codecs=vp8';
 			if (!MediaRecorder.isTypeSupported(mimeType)) {
-				mimeType = 'video/webm;codecs=vp8';
-				if (!MediaRecorder.isTypeSupported(mimeType)) {
-					mimeType = 'video/webm';
-				}
+				mimeType = 'video/webm';
 			}
 
 			this.mediaRecorder = new MediaRecorder(this.stream, {
 				mimeType,
-				videoBitsPerSecond: 4000000
+				videoBitsPerSecond: 1500000 // Optimized 1.5 Mbps for smooth real-time performance
 			});
 
 			this.mediaRecorder.ondataavailable = (event) => {
@@ -166,13 +177,30 @@ export class CameraService {
 			return null;
 		}
 
-		return new Promise<{ blob: Blob; url: string }>((resolve) => {
-			this.mediaRecorder!.onstop = () => {
-				const blob = new Blob(this.recordedChunks, { type: this.mediaRecorder?.mimeType || 'video/webm' });
-				const url = URL.createObjectURL(blob);
-				resolve({ blob, url });
+		return new Promise<{ blob: Blob; url: string } | null>((resolve) => {
+			let isResolved = false;
+			const finish = () => {
+				if (!isResolved) {
+					isResolved = true;
+					if (this.recordedChunks && this.recordedChunks.length > 0) {
+						const blob = new Blob(this.recordedChunks, { type: this.mediaRecorder?.mimeType || 'video/webm' });
+						const url = URL.createObjectURL(blob);
+						resolve({ blob, url });
+					} else {
+						resolve(null);
+					}
+				}
 			};
-			this.mediaRecorder!.stop();
+
+			this.mediaRecorder!.onstop = finish;
+			try {
+				this.mediaRecorder!.stop();
+			} catch (_) {
+				finish();
+			}
+
+			// Safety timeout: never hang more than 1500ms
+			setTimeout(finish, 1500);
 		});
 	}
 }

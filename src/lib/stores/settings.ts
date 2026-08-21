@@ -4,8 +4,9 @@ import type { KioskSettings } from '$lib/types';
 const STORAGE_KEY = 'chekiyuume_kiosk_settings';
 
 const defaultSettings: KioskSettings = {
+	cameraSource: 'internal',
 	cameraDeviceId: '',
-	cameraResolution: '1080p',
+	cameraResolution: '720p',
 	isMirrored: true,
 	countdownSeconds: 5,
 	btsDurationSeconds: 3,

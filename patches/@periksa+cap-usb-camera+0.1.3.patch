@@ -1,0 +1,282 @@
+diff --git a/node_modules/@periksa/cap-usb-camera/android/build.gradle b/node_modules/@periksa/cap-usb-camera/android/build.gradle
+index 823a810..7f8c741 100644
+--- a/node_modules/@periksa/cap-usb-camera/android/build.gradle
++++ b/node_modules/@periksa/cap-usb-camera/android/build.gradle
+@@ -18,8 +18,9 @@ buildscript {
+ apply plugin: 'com.android.library'
+ 
+ android {
++    namespace "id.periksa.plugins.usbcamera"
+     ndkVersion '22.1.7171670'
+-    compileSdkVersion project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 28
++    compileSdkVersion project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 34
+     defaultConfig {
+         minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 21
+         targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 27
+@@ -37,8 +38,8 @@ android {
+         abortOnError false
+     }
+     compileOptions {
+-        sourceCompatibility JavaVersion.VERSION_1_8
+-        targetCompatibility JavaVersion.VERSION_1_8
++        sourceCompatibility JavaVersion.VERSION_17
++        targetCompatibility JavaVersion.VERSION_17
+     }
+ }
+ 
+diff --git a/node_modules/@periksa/cap-usb-camera/android/src/main/java/com/serenegiant/usb_libuvccamera/LibUVCCameraUSBMonitor.java b/node_modules/@periksa/cap-usb-camera/android/src/main/java/com/serenegiant/usb_libuvccamera/LibUVCCameraUSBMonitor.java
+index be628e0..2c78298 100644
+--- a/node_modules/@periksa/cap-usb-camera/android/src/main/java/com/serenegiant/usb_libuvccamera/LibUVCCameraUSBMonitor.java
++++ b/node_modules/@periksa/cap-usb-camera/android/src/main/java/com/serenegiant/usb_libuvccamera/LibUVCCameraUSBMonitor.java
+@@ -166,11 +166,19 @@ public final class LibUVCCameraUSBMonitor {
+ 			if (DEBUG) Log.i(TAG, "register:");
+ 			final Context context = mWeakContext.get();
+ 			if (context != null) {
+-				mPermissionIntent = PendingIntent.getBroadcast(context, 0, new Intent(ACTION_USB_PERMISSION), 0);
++				int flags = 0;
++				if (android.os.Build.VERSION.SDK_INT >= 31) {
++					flags |= PendingIntent.FLAG_MUTABLE;
++				}
++				mPermissionIntent = PendingIntent.getBroadcast(context, 0, new Intent(ACTION_USB_PERMISSION), flags);
+ 				final IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+ 				// ACTION_USB_DEVICE_ATTACHED never comes on some devices so it should not be added here
+ 				filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+-				context.registerReceiver(mUsbReceiver, filter);
++				if (android.os.Build.VERSION.SDK_INT >= 33) {
++					context.registerReceiver(mUsbReceiver, filter, Context.RECEIVER_EXPORTED);
++				} else {
++					context.registerReceiver(mUsbReceiver, filter);
++				}
+ 			}
+ 			// start connection check
+ 			mDeviceCounts = 0;
+diff --git a/node_modules/@periksa/cap-usb-camera/android/src/main/java/id/periksa/plugins/usbcamera/USBCameraActivity.java b/node_modules/@periksa/cap-usb-camera/android/src/main/java/id/periksa/plugins/usbcamera/USBCameraActivity.java
+index 9cad0e1..f46cd80 100644
+--- a/node_modules/@periksa/cap-usb-camera/android/src/main/java/id/periksa/plugins/usbcamera/USBCameraActivity.java
++++ b/node_modules/@periksa/cap-usb-camera/android/src/main/java/id/periksa/plugins/usbcamera/USBCameraActivity.java
+@@ -89,33 +89,64 @@ public class USBCameraActivity extends BaseActivity implements CameraDialog.Came
+ 
+         mBtnCancel = findViewById(R.id.btn_cancel);
+         mBtnCancel.setOnClickListener(mOnCancelClickListener);
+-        mBtnCancel.setVisibility(View.INVISIBLE);
++        mBtnCancel.setVisibility(View.VISIBLE);
+ 
+         mUSBMonitor = new LibUVCCameraUSBMonitor(this, mOnDeviceConnectListener);
+         mCameraHandler = UVCCameraHandler.createHandler(this, mUVCCameraView,
+                 1, PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_MODE);
+ 
+-        isCaptureToStorage = getIntent().getExtras().getBoolean("capture_to_storage", false);
++        isCaptureToStorage = getIntent() != null && getIntent().getBooleanExtra("capture_to_storage", false);
+     }
+ 
+     @Override
+     protected void onStart() {
+         super.onStart();
+-        mUSBMonitor.register();
+-        if (mUVCCameraView != null)
+-            mUVCCameraView.onResume();
+-
+         intentResult = new Intent();
++        try {
++            mUSBMonitor.register();
++            if (mUVCCameraView != null)
++                mUVCCameraView.onResume();
+ 
+-        Log.d(TAG, "***** Device count: " + mUSBMonitor.getDeviceCount());
++            // Give it a tiny bit of time for USB subsystem to report devices
++            // especially on slower devices or hubs
++            mUSBMonitor.getDeviceList(); 
++
++            List<UsbDevice> devices = mUSBMonitor.getDeviceList();
++            Log.d(TAG, "***** Device count onStart: " + (devices != null ? devices.size() : 0));
++
++            if (devices == null || devices.isEmpty()) {
++                // Before we give up, wait 400ms and try one more time
++                // This handles edge cases where register() is still async-hooking
++                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
++                    List<UsbDevice> retryDevices = mUSBMonitor.getDeviceList();
++                    if (retryDevices == null || retryDevices.isEmpty()) {
++                        intentResult.putExtra("exit_code", "exit_no_device");
++                        setResult(RESULT_CANCELED, intentResult);
++                        finish();
++                    } else {
++                        handleDevices(retryDevices);
++                    }
++                }, 400);
++                return;
++            }
+ 
+-        if (mUSBMonitor.getDeviceCount() == 0) {
+-            intentResult.putExtra("exit_code", "exit_no_device");
++            handleDevices(devices);
++        } catch (Exception e) {
++            Log.e(TAG, "Error in onStart", e);
++            intentResult.putExtra("exit_code", "exit_error: " + e.getMessage());
+             setResult(RESULT_CANCELED, intentResult);
+             finish();
+         }
+     }
+ 
++    private void handleDevices(List<UsbDevice> devices) {
++        if (devices.size() == 1) {
++            mUSBMonitor.requestPermission(devices.get(0));
++        } else {
++            CameraDialog.showDialog(USBCameraActivity.this);
++        }
++    }
++
+     @Override
+     protected void onStop() {
+         mCameraHandler.close();
+diff --git a/node_modules/@periksa/cap-usb-camera/android/src/main/java/id/periksa/plugins/usbcamera/UsbCameraPlugin.java b/node_modules/@periksa/cap-usb-camera/android/src/main/java/id/periksa/plugins/usbcamera/UsbCameraPlugin.java
+index 64923b2..f3b17e3 100644
+--- a/node_modules/@periksa/cap-usb-camera/android/src/main/java/id/periksa/plugins/usbcamera/UsbCameraPlugin.java
++++ b/node_modules/@periksa/cap-usb-camera/android/src/main/java/id/periksa/plugins/usbcamera/UsbCameraPlugin.java
+@@ -3,6 +3,7 @@ package id.periksa.plugins.usbcamera;
+ import android.Manifest;
+ import android.content.Intent;
+ import android.graphics.Bitmap;
++import android.graphics.BitmapFactory;
+ import android.graphics.ImageDecoder;
+ import android.net.Uri;
+ import android.os.Build;
+@@ -23,24 +24,20 @@ import com.getcapacitor.annotation.Permission;
+ import com.getcapacitor.annotation.PermissionCallback;
+ 
+ import java.io.ByteArrayOutputStream;
+-import java.io.IOException;
++import java.io.File;
+ import java.util.ArrayList;
+ import java.util.List;
+ 
+ @CapacitorPlugin(name = "UsbCamera", permissions = {
+-        @Permission(strings = {Manifest.permission.CAMERA}, alias = UsbCameraPlugin.PERM_CAMERA),
+-        @Permission(strings = {Manifest.permission.READ_EXTERNAL_STORAGE}, alias = UsbCameraPlugin.PERM_READ_EXT_STORAGE),
+-        @Permission(strings = {Manifest.permission.WRITE_EXTERNAL_STORAGE}, alias = UsbCameraPlugin.PERM_WRITE_EXT_STORAGE)
++        @Permission(strings = {Manifest.permission.CAMERA}, alias = UsbCameraPlugin.PERM_CAMERA)
+ })
+ public class UsbCameraPlugin extends Plugin {
+ 
+     static final String PERM_CAMERA = "camera";
+-    static final String PERM_READ_EXT_STORAGE = "r_ext";
+-    static final String PERM_WRITE_EXT_STORAGE = "w_ext";
+ 
+     private static final String TAG = "PluginBridgeDebug";
+     private static final String[] REQUIRED_PERMISSION_ALIASES = new String[]{
+-            PERM_CAMERA, PERM_READ_EXT_STORAGE, PERM_WRITE_EXT_STORAGE
++            PERM_CAMERA
+     };
+ 
+     private final List<String> mMissPermissions = new ArrayList<>();
+@@ -80,10 +77,7 @@ public class UsbCameraPlugin extends Plugin {
+     @PermissionCallback
+     private void appPermissionCallback(PluginCall call) {
+         if (getPermissionState(PERM_CAMERA) != PermissionState.GRANTED) {
+-            call.reject("User denied required permissions");
+-            return;
+-        } else if (getPermissionState(PERM_WRITE_EXT_STORAGE) != PermissionState.GRANTED) {
+-            call.reject("User denied required permissions");
++            call.reject("User denied camera permission");
+             return;
+         }
+         showIntent(call);
+@@ -101,63 +95,65 @@ public class UsbCameraPlugin extends Plugin {
+     private String loadImageFromUri(Uri photoUri, int compressionRatio) {
+         Bitmap bitmap = null;
+         try {
+-            if (Build.VERSION.SDK_INT > 27) {
+-                // on newer versions of Android, use the new decodeBitmap method
++            if (photoUri != null && "file".equalsIgnoreCase(photoUri.getScheme()) && photoUri.getPath() != null) {
++                bitmap = BitmapFactory.decodeFile(photoUri.getPath());
++            } else if (photoUri != null && Build.VERSION.SDK_INT > 27) {
+                 ImageDecoder.Source source = ImageDecoder.createSource(getContext().getContentResolver(), photoUri);
+                 bitmap = ImageDecoder.decodeBitmap(source);
+-            } else {
+-                // support older versions of Android by using getBitmap
++            } else if (photoUri != null) {
+                 bitmap = MediaStore.Images.Media.getBitmap(getContext().getContentResolver(), photoUri);
+             }
+-        } catch (IOException ex) {
++        } catch (Exception ex) {
+             ex.printStackTrace();
+         }
+ 
+-        Bitmap resizedBitmap = Bitmap.createScaledBitmap(bitmap, 640, 480, true);
++        if (bitmap == null) {
++            return "";
++        }
+ 
+-        // Convert Bitmap to Base64 string.
++        // Convert Bitmap to Base64 string
+         ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+-        resizedBitmap.compress(Bitmap.CompressFormat.JPEG, compressionRatio, byteArrayOutputStream);
++        bitmap.compress(Bitmap.CompressFormat.JPEG, compressionRatio, byteArrayOutputStream);
+         byte[] byteArray = byteArrayOutputStream.toByteArray();
+-        String encoded = Base64.encodeToString(byteArray, Base64.NO_PADDING | Base64.NO_WRAP);
+-
+-        return encoded;
++        return Base64.encodeToString(byteArray, Base64.NO_PADDING | Base64.NO_WRAP);
+     }
+ 
+     @ActivityCallback
+     private void imageResult(PluginCall call, ActivityResult result) {
+         if (call == null) return;
+-        Bundle bundle = result.getData().getExtras();
+-        if (bundle != null) {
+-            String exitCode = (String) bundle.get("exit_code");
+-            int resultCode = result.getResultCode();
+         
+-            String resultCodeDesc = (resultCode == -1) ? "OK" : "CANCELED";
++        Intent data = result.getData();
++        Bundle bundle = (data != null) ? data.getExtras() : null;
++        int resultCode = result.getResultCode();
++        String resultCodeDesc = (resultCode == -1) ? "OK" : "CANCELED";
+ 
+-            String b64Result = "";
+-            Uri photoUri = (Uri) bundle.get("img_uri");
++        String exitCode = "user_canceled";
++        String b64Result = "";
++        Uri photoUri = null;
+ 
+-            // Result Code is OK.
+-            if (resultCode == -1) {
+-                if (photoUri != null) {
+-                    b64Result = loadImageFromUri(photoUri, 85);
++        if (bundle != null) {
++            exitCode = bundle.getString("exit_code", (resultCode == -1) ? "success" : "user_canceled");
++            photoUri = (Uri) bundle.get("img_uri");
++            if (resultCode == -1 && photoUri != null) {
++                b64Result = loadImageFromUri(photoUri, 92);
++                if (b64Result.length() > 0) {
+                     b64Result = "data:image/jpeg;base64," + b64Result;
+                 }
+             }
++        }
+ 
+-            JSObject plResult = new JSObject();
+-            plResult.put("status_code", resultCode);
+-            plResult.put("status_code_s", resultCodeDesc);
+-            plResult.put("exit_code", exitCode);
+-
+-            JSObject dataResult = new JSObject();
+-            if (b64Result.length() > 0) {
+-                dataResult.put("dataURL", b64Result);
+-                dataResult.put("fileURI", photoUri);
+-                plResult.put("data", dataResult);
+-            }
++        JSObject plResult = new JSObject();
++        plResult.put("status_code", resultCode);
++        plResult.put("status_code_s", resultCodeDesc);
++        plResult.put("exit_code", exitCode);
+ 
+-            call.resolve(plResult);
++        JSObject dataResult = new JSObject();
++        if (b64Result.length() > 0) {
++            dataResult.put("dataURL", b64Result);
++            dataResult.put("fileURI", photoUri != null ? photoUri.toString() : "");
++            plResult.put("data", dataResult);
+         }
++
++        call.resolve(plResult);
+     }
+ }
