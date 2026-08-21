@@ -111,16 +111,25 @@
 		</div>
 	</div>
 
-	<!-- Right: Compact Live Strip Sidebar — narrow panel, strip scales to fit -->
-	<div class="flex items-start justify-center h-full min-h-0 shrink-0 overflow-hidden w-[90px] sm:w-[130px] lg:w-[160px]">
-		<LiveStripPreview
-			mode="default"
-			layout={layout}
-			photos={photos}
-			totalPoses={totalPoses}
-			currentPoseIndex={currentPoseIndex}
-			onSlotClick={handleRetakeSlot}
-		/>
+	<!-- Right: Dedicated Live Frame Strip Showcase (Centered Card, True Aspect Ratio, Zero Clipping) -->
+	<div class="flex flex-col items-center justify-center h-full max-h-[min(90vh,680px)] min-h-0 shrink-0 p-2 sm:p-3 lg:p-3.5 bg-zinc-900/90 border border-zinc-800/80 rounded-2xl sm:rounded-3xl shadow-2xl backdrop-blur-md">
+		<div class="flex-1 min-h-0 flex items-center justify-center w-full overflow-hidden">
+			<LiveStripPreview
+				mode="default"
+				layout={layout}
+				photos={photos}
+				totalPoses={totalPoses}
+				currentPoseIndex={currentPoseIndex}
+				onSlotClick={handleRetakeSlot}
+			/>
+		</div>
+
+		<!-- Bottom Progress Pill (0 / 4) matching studio aesthetic -->
+		<div class="mt-1.5 sm:mt-2 shrink-0 flex items-center justify-center w-full">
+			<span class="rounded-lg sm:rounded-xl bg-zinc-800/90 border border-zinc-700/60 px-2.5 sm:px-3 py-0.5 sm:py-1 text-[9px] sm:text-xs font-mono font-bold text-zinc-300">
+				<span class="text-rose-400 font-extrabold">{photos.length}</span> / {totalPoses}
+			</span>
+		</div>
 	</div>
 </div>
 

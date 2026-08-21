@@ -14,12 +14,12 @@
 	let { mode, layout, photos, totalPoses, currentPoseIndex, onSlotClick }: Props = $props();
 </script>
 
-<div class="flex h-full w-full items-start justify-center min-h-0 min-w-0 overflow-hidden select-none">
+<div class="flex h-full w-full items-center justify-center min-h-0 min-w-0 overflow-hidden select-none">
 	{#if mode === 'default'}
-		<!-- Default Mode: Unified cohesive photostrip preview — one piece, no individual cards -->
+		<!-- Default Mode: Unified cohesive photostrip preview (Height-adaptive, zero distortion, zero clipping) -->
 		<div
-			class="relative rounded-sm shadow-2xl overflow-hidden shrink-0 transition-all duration-300"
-			style="background-color: {layout.backgroundColor || '#FFFFFF'}; width: 100%; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
+			class="relative rounded-xs sm:rounded-sm shadow-xl overflow-hidden shrink-0 transition-all duration-300 my-auto"
+			style="background-color: {layout.backgroundColor || '#FFFFFF'}; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight}; height: 100%; max-height: 100%; width: auto; max-width: 100%;"
 		>
 			<!-- Custom Background Image if present -->
 			{#if layout.backgroundUrl}
