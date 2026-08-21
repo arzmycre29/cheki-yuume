@@ -19,7 +19,7 @@
 		<!-- Default Mode: 100% WYSIWYG Photostrip Live Preview with Exact Canvas Aspect Ratio (Zero Distortion) -->
 		<div
 			class="relative rounded-sm sm:rounded-md shadow-2xl transition-all duration-300 border border-zinc-700/60 overflow-hidden shrink-0 my-auto"
-			style="background-color: {layout.backgroundColor || '#FFFFFF'}; max-height: 100%; max-width: 100%; width: auto; height: auto; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
+			style="background-color: {layout.backgroundColor || '#FFFFFF'}; height: 100%; width: auto; max-width: 100%; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
 		>
 			<!-- Custom Background Image if present -->
 			{#if layout.backgroundUrl}
