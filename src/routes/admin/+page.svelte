@@ -8,6 +8,7 @@
 	import { uvcCameraService, type UvcCaptureResult } from '$lib/services/uvcCamera';
 	import {
 		getAllSessionsFromDB,
+		saveSessionToDB,
 		deleteSessionFromDB,
 		deleteMultipleSessionsFromDB,
 		deleteAllSessionsFromDB,
@@ -20,6 +21,7 @@
 		uploadCustomFrameOverlayToCloudinary,
 		backupCustomFramesToCloudinary,
 		retrieveCustomFramesFromCloudinary,
+		retrieveSessionsFromCloudinary,
 		testCloudinaryConnection
 	} from '$lib/services/cloudStorage';
 	import PrintModal from '$lib/components/PrintModal.svelte';
@@ -124,12 +126,38 @@
 			navigator.mediaDevices.addEventListener('devicechange', refreshCameras);
 		}
 
-		// Auto-sync frames from Cloudinary on mount if configured
+		// Auto-sync frames & sessions from Cloudinary on mount if configured
 		if (formSettings.cloudProvider === 'cloudinary' && formSettings.cloudinaryCloudName?.trim()) {
 			try {
 				const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
 				if (res.success && res.frames.length > 0) {
 					customFramesStore.syncFromRemote(res.frames);
+				}
+			} catch (_) {}
+
+			try {
+				const sessionRes = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName);
+				if (sessionRes.success && sessionRes.sessions.length > 0) {
+					const cur = await getAllSessionsFromDB();
+					const existingIds = new Set(cur.map((s) => s.sessionId));
+					let changed = false;
+					for (const cs of sessionRes.sessions) {
+						if (!existingIds.has(cs.sessionId)) {
+							await saveSessionToDB({
+								sessionId: cs.sessionId,
+								guestName: cs.guestName || '',
+								mode: (cs.mode as any) || 'default',
+								layoutId: cs.layoutId || '4-cut-classic-white',
+								photostripDataUrl: cs.photoUrl || '',
+								videostripUrl: cs.videoUrl,
+								shareUrl: cs.shareUrl,
+								createdAt: cs.createdAt,
+								photos: []
+							});
+							changed = true;
+						}
+					}
+					if (changed) await loadSessions();
 				}
 			} catch (_) {}
 		}
@@ -367,6 +395,57 @@
 		}
 		sessionStore.setLayout(session.layoutId);
 		goto('/result');
+	}
+
+	let isSyncingSessions = $state(false);
+
+	async function handleSyncSessionsFromCloud() {
+		if (
+			formSettings.cloudProvider !== 'cloudinary' ||
+			!formSettings.cloudinaryCloudName?.trim()
+		) {
+			alert('Mohon atur dan simpan Cloudinary Cloud Name terlebih dahulu di tab Cloud 30-Day.');
+			return;
+		}
+
+		isSyncingSessions = true;
+		try {
+			const res = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName);
+			if (res.success && res.sessions.length > 0) {
+				const cur = await getAllSessionsFromDB();
+				const existingIds = new Set(cur.map((s) => s.sessionId));
+				let addedCount = 0;
+
+				for (const cs of res.sessions) {
+					if (!existingIds.has(cs.sessionId)) {
+						await saveSessionToDB({
+							sessionId: cs.sessionId,
+							guestName: cs.guestName || '',
+							mode: (cs.mode as any) || 'default',
+							layoutId: cs.layoutId || '4-cut-classic-white',
+							photostripDataUrl: cs.photoUrl || '',
+							videostripUrl: cs.videoUrl,
+							shareUrl: cs.shareUrl,
+							createdAt: cs.createdAt,
+							photos: []
+						});
+						addedCount++;
+					}
+				}
+
+				await loadSessions();
+				saveMessage = `Berhasil menyinkronkan riwayat! (${addedCount} sesi baru ditambahkan dari Cloudinary)`;
+			} else if (res.success) {
+				saveMessage = 'Sinkronisasi riwayat selesai: Semua sesi sudah up to date.';
+			} else {
+				alert(res.error || 'Gagal menyinkronkan riwayat dari Cloudinary.');
+			}
+		} catch (err: any) {
+			alert(`Gagal mengambil riwayat dari Cloud: ${err?.message || err}`);
+		} finally {
+			isSyncingSessions = false;
+			setTimeout(() => (saveMessage = ''), 4000);
+		}
 	}
 
 	async function handleRetrieveFramesFromCloud() {
@@ -680,10 +759,27 @@
 							type="button"
 							onclick={loadSessions}
 							class="flex items-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 px-3.5 py-2 text-xs font-bold text-zinc-300 border border-zinc-700 cursor-pointer"
-							title="Segarkan data dari database"
+							title="Segarkan data dari database lokal"
 						>
 							<RefreshCw class="h-3.5 w-3.5" />
 							<span>Segarkan</span>
+						</button>
+
+						<!-- Cloudinary Global Sessions Sync -->
+						<button
+							type="button"
+							onclick={handleSyncSessionsFromCloud}
+							disabled={isSyncingSessions}
+							class="flex items-center gap-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600 border border-rose-500/40 px-3.5 py-2 text-xs font-bold text-rose-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
+							title="Tarik & sinkronkan semua riwayat foto dari Cloudinary antar laptop"
+						>
+							{#if isSyncingSessions}
+								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+								<span>Menyinkronkan...</span>
+							{:else}
+								<Cloud class="h-3.5 w-3.5" />
+								<span>Tarik dari Cloud</span>
+							{/if}
 						</button>
 
 						<!-- Global Batch Backup All -->

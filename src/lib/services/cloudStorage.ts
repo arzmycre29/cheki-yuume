@@ -209,6 +209,22 @@ export async function uploadSessionToCloud(
 			const queryString = shareParams.toString();
 			const shareUrl = `${basePublicUrl}/share/${session.sessionId}${queryString ? `?${queryString}` : ''}`;
 
+			// Automatically append session into central Cloudinary sessions_manifest.json
+			recordSessionToCloudinaryManifest(
+				{
+					sessionId: session.sessionId,
+					guestName: session.guestName,
+					mode: session.mode,
+					layoutId: session.layoutId,
+					photoUrl: photoUrl || undefined,
+					videoUrl: videoUrl || undefined,
+					shareUrl,
+					createdAt: session.createdAt || Date.now()
+				},
+				cloudName,
+				uploadPreset
+			).catch((e) => console.warn('[Cloudinary] Session manifest background sync warning:', e));
+
 			return {
 				photoUrl,
 				videoUrl,
@@ -415,6 +431,121 @@ export async function testCloudinaryConnection(
 		return {
 			success: false,
 			message: `Koneksi Cloudinary Gagal: ${err?.message || String(err)}`
+		};
+	}
+}
+
+export interface CloudSessionSummary {
+	sessionId: string;
+	guestName?: string;
+	mode: string;
+	layoutId: string;
+	photoUrl?: string;
+	videoUrl?: string;
+	shareUrl?: string;
+	createdAt: number;
+}
+
+/**
+ * Appends / updates a session entry in the central Cloudinary sessions_manifest.json
+ */
+export async function recordSessionToCloudinaryManifest(
+	session: CloudSessionSummary,
+	cloudName: string,
+	uploadPreset: string
+): Promise<void> {
+	try {
+		const cleanCloud = cloudName.trim();
+		const cleanPreset = uploadPreset.trim();
+		if (!cleanCloud || !cleanPreset) return;
+
+		let existingSessions: CloudSessionSummary[] = [];
+		try {
+			const manifestUrl = `https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`;
+			const res = await fetch(manifestUrl);
+			if (res.ok) {
+				const data = await res.json();
+				if (data && Array.isArray(data.sessions)) {
+					existingSessions = data.sessions;
+				}
+			}
+		} catch (_) {}
+
+		// Remove duplicate if already present
+		existingSessions = existingSessions.filter((s) => s.sessionId !== session.sessionId);
+		// Add newest at top
+		existingSessions.unshift(session);
+		// Limit to 500 latest sessions
+		if (existingSessions.length > 500) {
+			existingSessions = existingSessions.slice(0, 500);
+		}
+
+		const manifestData = {
+			version: '1.0',
+			updatedAt: Date.now(),
+			totalSessions: existingSessions.length,
+			sessions: existingSessions
+		};
+
+		const blob = new Blob([JSON.stringify(manifestData, null, 2)], {
+			type: 'application/json'
+		});
+
+		await uploadToCloudinary(blob, 'raw', cleanCloud, cleanPreset, {
+			folder: 'chekiyuume',
+			publicId: 'sessions_manifest.json',
+			fileName: 'sessions_manifest.json',
+			tags: ['chekiyuume', 'sessions_manifest', 'database']
+		});
+		console.log('[Cloudinary] Global session manifest updated successfully');
+	} catch (err) {
+		console.warn('[Cloudinary] Failed to update sessions manifest:', err);
+	}
+}
+
+/**
+ * Retrieves all sessions from Cloudinary sessions_manifest.json
+ */
+export async function retrieveSessionsFromCloudinary(
+	cloudName: string
+): Promise<{ success: boolean; sessions: CloudSessionSummary[]; count: number; error?: string }> {
+	try {
+		const cleanCloud = cloudName.trim();
+		if (!cleanCloud) {
+			throw new Error('Cloud Name Cloudinary belum diatur.');
+		}
+
+		const manifestUrl = `https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`;
+		const res = await fetch(manifestUrl);
+
+		if (!res.ok) {
+			if (res.status === 404) {
+				return {
+					success: true,
+					sessions: [],
+					count: 0
+				};
+			}
+			throw new Error(`Gagal mengunduh manifest sesi dari Cloudinary (HTTP ${res.status})`);
+		}
+
+		const data = await res.json();
+		if (!data || !Array.isArray(data.sessions)) {
+			throw new Error('Format manifest sesi di Cloudinary tidak valid.');
+		}
+
+		return {
+			success: true,
+			sessions: data.sessions,
+			count: data.sessions.length
+		};
+	} catch (err: any) {
+		console.warn('[Sessions] Retrieve sessions from Cloudinary failed:', err);
+		return {
+			success: false,
+			sessions: [],
+			count: 0,
+			error: err?.message || String(err)
 		};
 	}
 }
