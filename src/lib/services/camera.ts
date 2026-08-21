@@ -4,10 +4,136 @@ export interface VideoDeviceInfo {
 	isUsb?: boolean;
 }
 
+export interface CameraDiagnosticReport {
+	isSecureContext: boolean;
+	protocol: string;
+	hostname: string;
+	hasMediaDevices: boolean;
+	hasGetUserMedia: boolean;
+	permissionState: string;
+	deviceCount: number;
+	devices: Array<{ deviceId: string; label: string; kind: string }>;
+	errorCode?: string;
+	errorMessage?: string;
+	errorName?: string;
+	errorStack?: string;
+	suggestedFix: string;
+	userAgent: string;
+	timestamp: string;
+}
+
 export class CameraService {
 	private stream: MediaStream | null = null;
 	private mediaRecorder: MediaRecorder | null = null;
 	private recordedChunks: Blob[] = [];
+
+	async runDiagnostics(
+		deviceId?: string,
+		resolution: '1080p' | '4k' | '720p' = '720p'
+	): Promise<CameraDiagnosticReport> {
+		const isSec = typeof window !== 'undefined' ? window.isSecureContext : false;
+		const protocol = typeof location !== 'undefined' ? location.protocol : '';
+		const hostname = typeof location !== 'undefined' ? location.hostname : '';
+		const hasMediaDevices = typeof navigator !== 'undefined' && !!navigator.mediaDevices;
+		const hasGetUserMedia = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
+		const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
+
+		let permissionState = 'unknown';
+		if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
+			try {
+				const status = await navigator.permissions.query({ name: 'camera' as any });
+				permissionState = status.state;
+			} catch (_) {}
+		}
+
+		let devices: Array<{ deviceId: string; label: string; kind: string }> = [];
+		if (hasMediaDevices && navigator.mediaDevices.enumerateDevices) {
+			try {
+				const devList = await navigator.mediaDevices.enumerateDevices();
+				devices = devList
+					.filter((d) => d.kind === 'videoinput')
+					.map((d) => ({
+						deviceId: d.deviceId,
+						label: d.label || 'Unnamed Device',
+						kind: d.kind
+					}));
+			} catch (_) {}
+		}
+
+		const report: CameraDiagnosticReport = {
+			isSecureContext: isSec,
+			protocol,
+			hostname,
+			hasMediaDevices,
+			hasGetUserMedia,
+			permissionState,
+			deviceCount: devices.length,
+			devices,
+			userAgent,
+			timestamp: new Date().toISOString(),
+			suggestedFix: 'Kamera beroperasi dengan normal.'
+		};
+
+		// 1. Insecure HTTP Context
+		if (!isSec && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+			report.errorCode = 'ERR_INSECURE_HTTP_CONTEXT';
+			report.errorName = 'InsecureContextError';
+			report.errorMessage = `Akses WebRTC kamera diblokir browser pada alamat non-HTTPS (${hostname}).`;
+			report.suggestedFix =
+				'Buka aplikasi menggunakan domain resmi HTTPS (seperti https://cheki-yuume.pages.dev) atau jalankan langsung di localhost laptop tersebut.';
+			return report;
+		}
+
+		// 2. Permission Denied
+		if (permissionState === 'denied') {
+			report.errorCode = 'ERR_PERMISSION_DENIED';
+			report.errorName = 'NotAllowedError';
+			report.errorMessage = 'Izin kamera diblokir di setelan browser laptop ini.';
+			report.suggestedFix =
+				'Klik ikon gembok / kamera di bilah URL browser (sebelah kiri domain), ubah setelan Kamera menjadi "Izinkan / Allow", lalu refresh halaman.';
+			return report;
+		}
+
+		// 3. No Camera Hardware
+		if (devices.length === 0 && permissionState !== 'prompt') {
+			report.errorCode = 'ERR_NO_CAMERA_HARDWARE';
+			report.errorName = 'NotFoundError';
+			report.errorMessage = 'Tidak ada perangkat webcam atau kamera video yang terdeteksi oleh sistem operasi.';
+			report.suggestedFix =
+				'Pastikan webcam terhubung dengan benar dan driver kamera aktif di Device Manager Windows/OS.';
+			return report;
+		}
+
+		// 4. Test actual stream connection
+		try {
+			const stream = await this.startStream(deviceId, resolution);
+			stream.getTracks().forEach((t) => t.stop());
+		} catch (err: any) {
+			report.errorCode = err?.name || 'ERR_GETUSERMEDIA_FAILED';
+			report.errorName = err?.name || 'CameraStreamError';
+			report.errorMessage = err?.message || String(err);
+			report.errorStack = err?.stack || '';
+
+			if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+				report.suggestedFix =
+					'Klik popup browser dan pilih "Izinkan Kamera", atau ubah setelan izin di ikon gembok bilah URL.';
+			} else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
+				report.suggestedFix =
+					'Kamera sedang dikunci/digunakan oleh aplikasi lain (Zoom, OBS, Teams, Discord, atau aplikasi Kamera Windows). Tutup aplikasi tersebut lalu coba lagi.';
+			} else if (err?.name === 'OverconstrainedError') {
+				report.suggestedFix =
+					'Webcam laptop ini tidak mendukung resolusi atau frame rate yang diminta. Sistem akan otomatis beralih ke resolusi dasar.';
+			} else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+				report.suggestedFix =
+					'Webcam terputus atau tidak terdeteksi oleh driver sistem operasi.';
+			} else {
+				report.suggestedFix =
+					'Muat ulang halaman browser atau periksa pengaturan privasi kamera di Windows Settings > Privacy & Security > Camera.';
+			}
+		}
+
+		return report;
+	}
 
 	async getAvailableCameras(): Promise<VideoDeviceInfo[]> {
 		if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {

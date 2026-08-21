@@ -1,11 +1,12 @@
 <script lang="ts">
+	import type { CameraDiagnosticReport } from '$lib/services/camera';
 	import { onMount, onDestroy } from 'svelte';
 	import { cameraService } from '$lib/services/camera';
 	import { uvcCameraService } from '$lib/services/uvcCamera';
 	import { soundEngine } from '$lib/utils/sounds';
 	import { settingsStore } from '$lib/stores/settings';
 	import CountdownOverlay from './CountdownOverlay.svelte';
-	import { Camera, FlipHorizontal, RefreshCw, AlertTriangle, Usb, ShieldAlert } from '@lucide/svelte';
+	import { Camera, FlipHorizontal, RefreshCw, AlertTriangle, Usb, ShieldAlert, Copy, Check } from '@lucide/svelte';
 
 	interface Props {
 		onCapture: (photo: { dataUrl: string; blob: Blob }, btsVideo: { blob: Blob; url: string } | null) => void;
@@ -30,6 +31,10 @@
 	let isCountingDown = $state(false);
 	let countdownTimer: NodeJS.Timeout | null = null;
 
+	let cameraError = $state<string | null>(null);
+	let diagnosticReport = $state<CameraDiagnosticReport | null>(null);
+	let isCopied = $state(false);
+
 	// UVC Diagnostic state
 	let uvcErrorModal = $state<{
 		isOpen: boolean;
@@ -50,20 +55,15 @@
 	let enableSound = $derived($settingsStore.enableSound);
 	let isUvcMode = $derived($settingsStore.cameraSource === 'uvc' && uvcCameraService.isAvailable());
 
-	let cameraError = $state<string | null>(null);
-
 	async function initCamera() {
 		cameraError = null;
+		diagnosticReport = null;
+
 		if (isUvcMode) {
 			isCameraReady = true;
 			if (autoStartCountdown) {
 				setTimeout(() => startCountdown(), 1000);
 			}
-			return;
-		}
-
-		if (typeof window !== 'undefined' && !window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-			cameraError = 'Browser memblokir akses kamera di jaringan HTTP lokal (' + location.hostname + '). Buka via HTTPS resmi (seperti https://cheki-yuume.pages.dev) atau jalankan langsung di localhost.';
 			return;
 		}
 
@@ -86,16 +86,40 @@
 			}
 		} catch (err: any) {
 			console.error('Camera stream initialization failed:', err);
-			if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-				cameraError = 'Izin kamera diblokir browser. Klik ikon gembok/kamera di bilah URL atas dan pilih "Izinkan Kamera".';
-			} else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
-				cameraError = 'Kamera sedang dipakai aplikasi lain (Zoom/OBS/Kamera). Tutup aplikasi tersebut lalu klik Coba Lagi.';
-			} else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
-				cameraError = 'Webcam tidak terdeteksi di laptop ini. Pastikan webcam terpasang.';
-			} else {
+			try {
+				diagnosticReport = await cameraService.runDiagnostics(
+					$settingsStore.cameraDeviceId,
+					$settingsStore.cameraResolution
+				);
+				cameraError = diagnosticReport.errorMessage || err?.message || 'Gagal memulai stream kamera.';
+			} catch (_) {
 				cameraError = err?.message || 'Gagal memulai stream kamera.';
 			}
 		}
+	}
+
+	function copyDiagnosticReport() {
+		if (!diagnosticReport) return;
+		const text = `=== CHEKIYUUME CAMERA DIAGNOSTIC REPORT ===
+Timestamp: ${diagnosticReport.timestamp}
+URL: ${typeof location !== 'undefined' ? location.href : ''}
+Protocol: ${diagnosticReport.protocol} (SecureContext: ${diagnosticReport.isSecureContext ? 'YES' : 'NO'})
+Hostname: ${diagnosticReport.hostname}
+MediaDevices API: ${diagnosticReport.hasMediaDevices ? 'Available' : 'Unavailable'}
+GetUserMedia API: ${diagnosticReport.hasGetUserMedia ? 'Available' : 'Unavailable'}
+Permission State: ${diagnosticReport.permissionState}
+Devices Detected (${diagnosticReport.deviceCount}):
+${diagnosticReport.devices.map((d, i) => `  ${i + 1}. [${d.kind}] ${d.label} (ID: ${d.deviceId})`).join('\n') || '  (None)'}
+Error Code: ${diagnosticReport.errorCode || 'UNKNOWN'}
+Error Name: ${diagnosticReport.errorName || 'UNKNOWN'}
+Error Message: ${diagnosticReport.errorMessage || '-'}
+Suggested Fix: ${diagnosticReport.suggestedFix}
+User Agent: ${diagnosticReport.userAgent}
+Stack Trace: ${diagnosticReport.errorStack || 'N/A'}`;
+
+		navigator.clipboard.writeText(text);
+		isCopied = true;
+		setTimeout(() => (isCopied = false), 2500);
 	}
 
 	onMount(async () => {
@@ -237,22 +261,57 @@
 >
 	{#if cameraError}
 		<!-- Insecure Context / Permission Error Diagnostic Card -->
-		<div class="h-full w-full flex flex-col items-center justify-center bg-zinc-900/95 text-center p-6 select-none z-30">
-			<div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 mb-3 shadow-lg">
-				<AlertTriangle class="h-7 w-7" />
+		<div class="h-full w-full flex flex-col items-center justify-center bg-zinc-900/95 text-center p-6 select-none z-30 overflow-y-auto">
+			<div class="flex h-12 w-12 sm:h-14 sm:w-14 items-center justify-center rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 mb-3 shadow-lg shrink-0">
+				<AlertTriangle class="h-6 w-6 sm:h-7 sm:w-7" />
 			</div>
+			
 			<h4 class="text-sm sm:text-base font-black text-white font-display">Kamera Tidak Dapat Dibuka</h4>
+
+			{#if diagnosticReport?.errorCode}
+				<div class="mt-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-800/80 px-2.5 py-0.5 text-[10px] font-mono font-bold text-amber-300 border border-zinc-700">
+					<span>Kode:</span>
+					<span class="text-white">{diagnosticReport.errorCode}</span>
+				</div>
+			{/if}
+
 			<p class="text-xs text-zinc-300 max-w-sm mt-2 leading-relaxed">
 				{cameraError}
 			</p>
-			<button
-				type="button"
-				onclick={(e) => { e.stopPropagation(); initCamera(); }}
-				class="mt-4 flex items-center gap-2 rounded-xl bg-rose-500 hover:bg-rose-600 px-4 py-2 text-xs font-bold text-white shadow-lg cursor-pointer transition-all active:scale-95"
-			>
-				<RefreshCw class="h-3.5 w-3.5" />
-				<span>Coba Hubungkan Ulang</span>
-			</button>
+
+			{#if diagnosticReport?.suggestedFix && diagnosticReport.suggestedFix !== 'Kamera beroperasi dengan normal.'}
+				<div class="mt-3 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-left max-w-sm">
+					<div class="text-[10px] uppercase font-bold text-amber-400 mb-0.5">🛠️ Solusi Cepat:</div>
+					<p class="text-[11px] text-zinc-300 leading-snug">
+						{diagnosticReport.suggestedFix}
+					</p>
+				</div>
+			{/if}
+
+			<div class="mt-4 flex items-center gap-2">
+				<button
+					type="button"
+					onclick={(e) => { e.stopPropagation(); copyDiagnosticReport(); }}
+					class="flex items-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 px-3.5 py-2 text-xs font-bold text-zinc-200 border border-zinc-700 shadow-md cursor-pointer transition-all active:scale-95"
+				>
+					{#if isCopied}
+						<Check class="h-3.5 w-3.5 text-emerald-400" />
+						<span class="text-emerald-400">Tersalin!</span>
+					{:else}
+						<Copy class="h-3.5 w-3.5 text-zinc-400" />
+						<span>Salin Laporan Diagnostik</span>
+					{/if}
+				</button>
+
+				<button
+					type="button"
+					onclick={(e) => { e.stopPropagation(); initCamera(); }}
+					class="flex items-center gap-1.5 rounded-xl bg-rose-500 hover:bg-rose-600 px-4 py-2 text-xs font-bold text-white shadow-lg cursor-pointer transition-all active:scale-95"
+				>
+					<RefreshCw class="h-3.5 w-3.5" />
+					<span>Coba Lagi</span>
+				</button>
+			</div>
 		</div>
 	{:else if isUvcMode}
 		<!-- UVC Native Mode Viewfinder Placeholder -->
