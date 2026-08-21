@@ -11,6 +11,7 @@
 		ALL_FRAME_TEMPLATES
 	} from '$lib/config/frameLayouts';
 	import GuestNameModal from '$lib/components/GuestNameModal.svelte';
+	import { enterFullscreen } from '$lib/utils/fullscreen';
 	import {
 		Camera,
 		Sparkles,
@@ -49,6 +50,7 @@
 	});
 
 	function handleStart() {
+		enterFullscreen();
 		step = 'mode-select';
 	}
 

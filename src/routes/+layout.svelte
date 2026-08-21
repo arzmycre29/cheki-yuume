@@ -1,8 +1,10 @@
 <script lang="ts">
 	import '../app.css';
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { settingsStore } from '$lib/stores/settings';
-	import { Lock, X, ArrowRight, Shield } from '@lucide/svelte';
+	import { isFullscreen, toggleFullscreen, onFullscreenChange } from '$lib/utils/fullscreen';
+	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2 } from '@lucide/svelte';
 
 	let { children } = $props();
 
@@ -11,6 +13,14 @@
 	let showPinModal = $state(false);
 	let pinInput = $state('');
 	let pinError = $state('');
+	let isFullscreenActive = $state(false);
+
+	onMount(() => {
+		isFullscreenActive = isFullscreen();
+		return onFullscreenChange((active) => {
+			isFullscreenActive = active;
+		});
+	});
 
 	function handleSecretTap() {
 		tapCount++;
@@ -43,12 +53,31 @@
 		if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') {
 			showPinModal = true;
 		}
+		if (e.key === 'F11' || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f')) {
+			e.preventDefault();
+			toggleFullscreen();
+		}
 	}
 </script>
 
 <svelte:window onkeydown={handleKeyDown} />
 
 <main class="relative h-screen w-screen bg-zinc-950 text-zinc-100 flex flex-col overflow-hidden font-sans select-none">
+	<!-- Fullscreen Quick Toggle (Top Left) -->
+	<button
+		type="button"
+		onclick={() => toggleFullscreen()}
+		class="fixed top-3 left-3 z-40 flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl bg-black/40 hover:bg-black/80 text-zinc-400 hover:text-white border border-zinc-800/60 backdrop-blur-md transition-all active:scale-95 cursor-pointer shadow-md opacity-40 hover:opacity-100"
+		title={isFullscreenActive ? 'Keluar Layar Penuh (F11)' : 'Masuk Layar Penuh (F11)'}
+		aria-label="Toggle Fullscreen"
+	>
+		{#if isFullscreenActive}
+			<Minimize2 class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+		{:else}
+			<Maximize2 class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+		{/if}
+	</button>
+
 	<!-- Secret Admin Trigger Hotspot (Top Right Corner) -->
 	<button
 		type="button"
