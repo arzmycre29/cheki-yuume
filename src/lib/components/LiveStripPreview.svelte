@@ -16,9 +16,9 @@
 
 <div class="flex h-full w-full items-start justify-center min-h-0 min-w-0 overflow-hidden select-none">
 	{#if mode === 'default'}
-		<!-- Default Mode: 100% WYSIWYG Photostrip Live Preview — width-driven, clips to container height -->
+		<!-- Default Mode: Unified cohesive photostrip preview — one piece, no individual cards -->
 		<div
-			class="relative rounded-xs shadow-2xl transition-all duration-300 border border-zinc-700/60 overflow-hidden shrink-0 max-h-full"
+			class="relative rounded-sm shadow-2xl overflow-hidden shrink-0 transition-all duration-300"
 			style="background-color: {layout.backgroundColor || '#FFFFFF'}; width: 100%; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
 		>
 			<!-- Custom Background Image if present -->
@@ -26,7 +26,7 @@
 				<img src={layout.backgroundUrl} alt="Background" class="absolute inset-0 h-full w-full object-cover pointer-events-none" />
 			{/if}
 
-			<!-- Photo Slots rendered with exact canvas percentage coordinates -->
+			<!-- Photo Slots — NO individual scale/ring that overflow. Active slot = inset indicator only -->
 			{#each layout.slots as slot, idx}
 				{@const photo = photos.find((p) => p.index === idx) || photos[idx]}
 				{@const isCurrent = idx === currentPoseIndex}
@@ -38,28 +38,35 @@
 				<button
 					type="button"
 					onclick={() => onSlotClick && onSlotClick(idx)}
-					class="absolute overflow-hidden bg-zinc-800/90 border transition-all duration-300 cursor-pointer {isCurrent ? 'ring-2 ring-rose-500 border-rose-400 scale-[1.01] z-20' : 'border-zinc-700/60 z-10 hover:border-rose-400/80'}"
-					style="left: {leftPct}%; top: {topPct}%; width: {widthPct}%; height: {heightPct}%; border-radius: 2px;"
+					class="absolute overflow-hidden cursor-pointer transition-all duration-200 z-10"
+					style="left: {leftPct}%; top: {topPct}%; width: {widthPct}%; height: {heightPct}%; border-radius: 2px; background: rgba(20,20,20,0.72);"
 					title={photo ? `Klik untuk Ulangi (Retake) Slot ${idx + 1}` : `Slot ${idx + 1}`}
 				>
 					{#if photo && photo.dataUrl}
+						<!-- Filled slot — photo -->
 						<img src={photo.dataUrl} alt="Pose {idx + 1}" class="h-full w-full object-cover animate-in fade-in zoom-in duration-300" />
-						<div class="absolute bottom-0.5 right-0.5 rounded-full bg-black/70 p-0.5 text-emerald-400 z-20">
+						<div class="absolute bottom-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-emerald-400 z-10 pointer-events-none">
 							<CheckCircle2 class="h-2.5 w-2.5" />
 						</div>
 					{:else}
-						<div class="flex h-full w-full flex-col items-center justify-center text-zinc-400 p-0.5">
-							<ImageIcon class="h-3 w-3 mb-0.5 opacity-50" />
-							<span class="text-[7px] font-extrabold uppercase tracking-wider">Slot {idx + 1}</span>
-							{#if isCurrent}
-								<span class="text-[6px] font-extrabold text-rose-400 animate-pulse mt-0.5">Aktif</span>
-							{/if}
+						<!-- Empty slot — minimal placeholder, no dark card effect -->
+						<div class="flex h-full w-full flex-col items-center justify-center opacity-40 pointer-events-none">
+							<ImageIcon class="h-3 w-3 mb-0.5" style="color: {layout.backgroundColor === '#FFFFFF' || !layout.backgroundColor ? '#666' : '#aaa'}" />
+							<span class="text-[7px] font-bold uppercase" style="color: {layout.backgroundColor === '#FFFFFF' || !layout.backgroundColor ? '#666' : '#aaa'}">{idx + 1}</span>
+						</div>
+					{/if}
+
+					<!-- Active slot: inset ring (never overflows the slot boundary) -->
+					{#if isCurrent}
+						<div class="absolute inset-0 pointer-events-none z-20" style="box-shadow: inset 0 0 0 2px #f43f5e; border-radius: 2px;"></div>
+						<div class="absolute top-0.5 left-0.5 rounded-xs bg-rose-500 px-1 py-px z-30 pointer-events-none">
+							<span class="text-[5px] font-black text-white uppercase tracking-wide">Aktif</span>
 						</div>
 					{/if}
 				</button>
 			{/each}
 
-			<!-- Custom Overlay Artwork on top of slots (only if custom frame overlay exists) -->
+			<!-- Custom Overlay Artwork on top of slots -->
 			{#if layout.overlayUrl}
 				<img src={layout.overlayUrl} alt="Overlay" class="absolute inset-0 h-full w-full object-cover pointer-events-none z-30" />
 			{/if}
