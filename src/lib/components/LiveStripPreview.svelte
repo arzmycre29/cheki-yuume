@@ -16,10 +16,10 @@
 
 <div class="flex h-full w-full items-center justify-center min-h-0 min-w-0 overflow-hidden select-none">
 	{#if mode === 'default'}
-		<!-- Default Mode: 100% WYSIWYG Photostrip Live Preview with Exact Canvas Aspect Ratio (Zero Distortion) -->
+		<!-- Default Mode: 100% WYSIWYG Photostrip Live Preview — width-driven, scales to container -->
 		<div
-			class="relative rounded-sm sm:rounded-md shadow-2xl transition-all duration-300 border border-zinc-700/60 overflow-hidden shrink-0 my-auto"
-			style="background-color: {layout.backgroundColor || '#FFFFFF'}; height: 100%; width: auto; max-width: 100%; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
+			class="relative rounded-xs shadow-2xl transition-all duration-300 border border-zinc-700/60 overflow-hidden shrink-0"
+			style="background-color: {layout.backgroundColor || '#FFFFFF'}; width: 100%; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
 		>
 			<!-- Custom Background Image if present -->
 			{#if layout.backgroundUrl}
@@ -66,7 +66,7 @@
 		</div>
 	{:else}
 		<!-- Creative Mode: 8-Shot Thumbnail Gallery Strip -->
-		<div class="flex flex-col h-full w-full overflow-hidden shrink-0">
+		<div class="flex flex-col h-full w-[160px] sm:w-[200px] lg:w-[240px] rounded-2xl bg-zinc-900/90 border border-zinc-800 p-3 shadow-xl overflow-hidden shrink-0">
 			<div class="text-center mb-2 shrink-0">
 				<h4 class="text-xs font-extrabold uppercase tracking-wider text-white font-display">
 					Koleksi Foto ({photos.length}/8)
