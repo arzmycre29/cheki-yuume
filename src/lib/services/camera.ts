@@ -64,19 +64,22 @@ export class CameraService {
 	): Promise<MediaStream> {
 		this.stopStream();
 
+		const targetDeviceId = deviceId && deviceId.trim() !== '' ? deviceId.trim() : undefined;
+
 		const resMap = {
 			'720p': { width: { ideal: 1280 }, height: { ideal: 720 } },
 			'1080p': { width: { ideal: 1920 }, height: { ideal: 1080 } },
 			'4k': { width: { ideal: 3840 }, height: { ideal: 2160 } }
 		};
 
+		const resConfig = resMap[resolution] || resMap['720p'];
+
 		const videoConstraints: MediaTrackConstraints = {
-			...resMap[resolution],
-			frameRate: { ideal: 30, max: 60 }
+			...resConfig
 		};
 
-		if (deviceId) {
-			videoConstraints.deviceId = { ideal: deviceId };
+		if (targetDeviceId) {
+			videoConstraints.deviceId = { ideal: targetDeviceId };
 		}
 
 		try {
@@ -86,20 +89,16 @@ export class CameraService {
 			});
 			return this.stream;
 		} catch (err) {
-			console.warn('[Camera] Ideal constraints failed, falling back to basic camera request', err);
+			console.warn('[Camera] Targeted constraints failed, falling back to basic camera request:', err);
 			try {
-				this.stream = await navigator.mediaDevices.getUserMedia({
-					video: deviceId ? { deviceId: { ideal: deviceId } } : true,
-					audio: false
-				});
-				return this.stream;
-			} catch (fallbackErr) {
-				console.warn('[Camera] Fallback to default device:', fallbackErr);
 				this.stream = await navigator.mediaDevices.getUserMedia({
 					video: true,
 					audio: false
 				});
 				return this.stream;
+			} catch (fatalErr) {
+				console.error('[Camera] All getUserMedia attempts failed:', fatalErr);
+				throw fatalErr;
 			}
 		}
 	}

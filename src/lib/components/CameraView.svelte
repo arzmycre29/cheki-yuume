@@ -66,13 +66,15 @@
 			);
 			if (videoElement) {
 				videoElement.srcObject = stream;
-				videoElement.onloadedmetadata = () => {
-					isCameraReady = true;
-					videoElement?.play();
-					if (autoStartCountdown) {
-						setTimeout(() => startCountdown(), 1000);
-					}
-				};
+				try {
+					await videoElement.play();
+				} catch (playErr) {
+					console.warn('Auto-play error on video element:', playErr);
+				}
+				isCameraReady = true;
+				if (autoStartCountdown) {
+					setTimeout(() => startCountdown(), 1000);
+				}
 			}
 		} catch (err) {
 			console.error('Camera stream initialization failed:', err);

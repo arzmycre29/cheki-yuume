@@ -148,7 +148,11 @@
 			);
 			if (testVideoElement) {
 				testVideoElement.srcObject = stream;
-				testVideoElement.play();
+				try {
+					await testVideoElement.play();
+				} catch (playErr) {
+					console.warn('testVideoElement play error:', playErr);
+				}
 				isTestingCamera = true;
 			}
 		} catch (err) {
