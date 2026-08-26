@@ -1,6 +1,3 @@
-import { Capacitor } from '@capacitor/core';
-import { UsbCamera, type UsbCameraResult } from '@periksa/cap-usb-camera';
-
 export interface UvcCaptureResult {
 	success: boolean;
 	dataUrl: string | null;
@@ -10,6 +7,16 @@ export interface UvcCaptureResult {
 	exitCode: string;
 	message: string;
 	diagnosticInfo: string;
+}
+
+function getUsbCameraPlugin(): any {
+	if (typeof window !== 'undefined') {
+		const cap = (window as any).Capacitor;
+		if (cap?.Plugins?.UsbCamera) {
+			return cap.Plugins.UsbCamera;
+		}
+	}
+	return null;
 }
 
 /**
@@ -55,7 +62,14 @@ class UvcCameraService {
 	 * Checks if currently running natively on Android with Capacitor
 	 */
 	isAvailable(): boolean {
-		return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+		if (typeof window === 'undefined') return false;
+		const cap = (window as any).Capacitor;
+		return Boolean(
+			cap &&
+			typeof cap.isNativePlatform === 'function' &&
+			cap.isNativePlatform() &&
+			getUsbCameraPlugin()
+		);
 	}
 
 	/**
@@ -99,7 +113,8 @@ class UvcCameraService {
 		}
 
 		try {
-			const res: any = await UsbCamera.getPhoto({ saveToStorage });
+			const usbCamera = getUsbCameraPlugin();
+			const res: any = await usbCamera?.getPhoto({ saveToStorage });
 			const exitCode = res.exit_code || (res.status_code === -1 ? 'success' : 'canceled');
 			const errorStack = res.error_stack || '';
 			const nativeCrash = this.getLatestNativeCrash();

@@ -1,5 +1,3 @@
-import { registerPlugin } from '@capacitor/core';
-
 export interface Camera2Device {
 	id: string;
 	name: string;
@@ -17,22 +15,34 @@ export interface Camera2PluginInterface {
 	}): Promise<{ success: boolean; dataUrl: string }>;
 }
 
-export const Camera2 = registerPlugin<Camera2PluginInterface>('Camera2');
+function getCamera2Plugin(): Camera2PluginInterface | null {
+	if (typeof window !== 'undefined') {
+		const cap = (window as any).Capacitor;
+		if (cap?.Plugins?.Camera2) {
+			return cap.Plugins.Camera2 as Camera2PluginInterface;
+		}
+	}
+	return null;
+}
 
 export class Camera2Service {
 	static async isSupported(): Promise<boolean> {
+		const plugin = getCamera2Plugin();
+		if (!plugin) return false;
 		try {
-			const res = await Camera2.getCameras();
+			const res = await plugin.getCameras();
 			return Array.isArray(res?.cameras);
 		} catch (e) {
-			console.warn('[Camera2Service] Camera2 plugin not available or not on native Android:', e);
+			console.warn('[Camera2Service] Camera2 plugin not available or error:', e);
 			return false;
 		}
 	}
 
 	static async getAvailableCameras(): Promise<Camera2Device[]> {
+		const plugin = getCamera2Plugin();
+		if (!plugin) return [];
 		try {
-			const res = await Camera2.getCameras();
+			const res = await plugin.getCameras();
 			return res?.cameras || [];
 		} catch (e) {
 			console.error('[Camera2Service] Failed to get Camera2 devices:', e);
@@ -45,7 +55,11 @@ export class Camera2Service {
 		width = 1920,
 		height = 1080
 	): Promise<{ success: boolean; dataUrl: string }> {
-		return await Camera2.capturePhoto({
+		const plugin = getCamera2Plugin();
+		if (!plugin) {
+			return { success: false, dataUrl: '' };
+		}
+		return await plugin.capturePhoto({
 			cameraId,
 			width,
 			height

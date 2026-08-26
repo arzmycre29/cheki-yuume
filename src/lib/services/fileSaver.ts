@@ -1,7 +1,3 @@
-import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Share } from '@capacitor/share';
-
 async function blobToBase64(blob: Blob): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const reader = new FileReader();
@@ -21,8 +17,8 @@ function dataUrlToBase64(dataUrl: string): string {
 }
 
 /**
- * Saves or shares a file across native Android (via Capacitor Filesystem & Share Sheet)
- * and Web Browsers (via standard anchor download).
+ * Saves or shares a file across Web Browsers (Web Share API / Anchor download)
+ * and dynamically delegates to native Android Capacitor plugins if available at runtime.
  */
 export async function saveOrShareFile(
 	content: Blob | string,
@@ -30,47 +26,83 @@ export async function saveOrShareFile(
 	mimeType: string,
 	dialogTitle = 'Simpan Media'
 ): Promise<boolean> {
-	if (Capacitor.isNativePlatform()) {
+	// 1. Dynamic check for native Capacitor runtime bridge (if loaded inside Android container)
+	const cap = typeof window !== 'undefined' ? (window as any).Capacitor : null;
+	if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
 		try {
-			let base64Data = '';
-			if (typeof content === 'string') {
-				if (content.startsWith('data:')) {
-					base64Data = dataUrlToBase64(content);
-				} else if (content.startsWith('blob:') || content.startsWith('http')) {
-					const res = await fetch(content);
-					const b = await res.blob();
-					base64Data = await blobToBase64(b);
+			const filesystem = cap.Plugins?.Filesystem;
+			const share = cap.Plugins?.Share;
+
+			if (filesystem && share) {
+				let base64Data = '';
+				if (typeof content === 'string') {
+					if (content.startsWith('data:')) {
+						base64Data = dataUrlToBase64(content);
+					} else if (content.startsWith('blob:') || content.startsWith('http')) {
+						const res = await fetch(content);
+						const b = await res.blob();
+						base64Data = await blobToBase64(b);
+					} else {
+						base64Data = content;
+					}
 				} else {
-					base64Data = content;
+					base64Data = await blobToBase64(content);
 				}
-			} else {
-				base64Data = await blobToBase64(content);
+
+				const writeResult = await filesystem.writeFile({
+					path: fileName,
+					data: base64Data,
+					directory: 'CACHE',
+					recursive: true
+				});
+
+				const fileUri = writeResult.uri;
+
+				await share.share({
+					title: fileName,
+					text: `ChekiYuume Photobooth - ${fileName}`,
+					files: [fileUri],
+					dialogTitle
+				});
+				return true;
 			}
-
-			// Write to cache directory so system share provider can access it
-			const writeResult = await Filesystem.writeFile({
-				path: fileName,
-				data: base64Data,
-				directory: Directory.Cache,
-				recursive: true
-			});
-
-			const fileUri = writeResult.uri;
-
-			// Open native Android Share/Save sheet
-			await Share.share({
-				title: fileName,
-				text: `ChekiYuume Photobooth - ${fileName}`,
-				files: [fileUri],
-				dialogTitle
-			});
-			return true;
 		} catch (nativeErr) {
-			console.warn('[FileSaver] Native save/share failed, trying fallback:', nativeErr);
+			console.warn('[FileSaver] Native Capacitor save/share failed, trying web fallback:', nativeErr);
 		}
 	}
 
-	// Web Browser fallback
+	// 2. Web Share API (native sheet on Chrome Android / iOS Safari / modern browsers)
+	if (typeof navigator !== 'undefined' && navigator.share && navigator.canShare) {
+		try {
+			let file: File | null = null;
+			if (typeof content === 'string') {
+				if (content.startsWith('data:') || content.startsWith('blob:')) {
+					const res = await fetch(content);
+					const blob = await res.blob();
+					file = new File([blob], fileName, { type: mimeType });
+				}
+			} else {
+				file = new File([content], fileName, { type: mimeType });
+			}
+
+			if (file && navigator.canShare({ files: [file] })) {
+				await navigator.share({
+					files: [file],
+					title: fileName,
+					text: `ChekiYuume - ${fileName}`
+				});
+				return true;
+			}
+		} catch (shareErr: any) {
+			// User canceled share sheet or permission denied
+			if (shareErr?.name === 'AbortError') {
+				return true;
+			}
+			console.warn('[FileSaver] Web Share API failed, falling back to download anchor:', shareErr);
+		}
+	}
+
+	// 3. Web Browser anchor download fallback
 	try {
 		let downloadUrl = '';
 		let shouldRevoke = false;

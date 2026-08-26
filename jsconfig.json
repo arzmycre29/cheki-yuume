@@ -7,6 +7,5 @@
 		"checkJs": true,
 		"allowJs": true,
 		"strict": false
-	},
-	"include": ["src/**/*.d.ts", "src/**/*.js", "src/**/*.ts", "src/**/*.svelte"]
+	}
 }

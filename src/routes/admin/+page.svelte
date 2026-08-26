@@ -8,6 +8,7 @@
 	import { uvcCameraService, type UvcCaptureResult } from '$lib/services/uvcCamera';
 	import {
 		getAllSessionsFromDB,
+		getSessionFromDB,
 		saveSessionToDB,
 		deleteSessionFromDB,
 		deleteMultipleSessionsFromDB,
@@ -23,6 +24,8 @@
 		retrieveCustomFramesFromCloudinary,
 		backupAllSessionsToCloudinary,
 		retrieveSessionsFromCloudinary,
+		retrieveSessionBySessionId,
+		retrieveSessionFromManifestUrl,
 		testCloudinaryConnection
 	} from '$lib/services/cloudStorage';
 	import PrintModal from '$lib/components/PrintModal.svelte';
@@ -47,7 +50,6 @@
 		Upload,
 		Image as ImageIcon,
 		X,
-		Eye,
 		ExternalLink,
 		Archive,
 		CheckSquare,
@@ -59,7 +61,10 @@
 		CloudUpload,
 		CloudDownload,
 		Link as LinkIcon,
-		Check
+		Check,
+		HardDrive,
+		FileJson,
+		Search
 	} from '@lucide/svelte';
 
 	let activeTab = $state<'general' | 'camera' | 'cloud' | 'sessions' | 'frames'>('sessions');
@@ -301,6 +306,17 @@
 	let selectedSessions = $derived(
 		sessions.filter((s) => selectedSessionIds.includes(s.sessionId))
 	);
+	let selectedUnbackedSessions = $derived(
+		selectedSessions.filter((s) => !s.cloudPhotoUrl && s.cloudUploadStatus !== 'success')
+	);
+	let unbackedSessions = $derived(
+		sessions.filter((s) => !s.cloudPhotoUrl && s.cloudUploadStatus !== 'success')
+	);
+
+	let isSinglePullModalOpen = $state(false);
+	let singlePullQuery = $state('');
+	let singlePullGuestName = $state('');
+	let isPullingSingleSession = $state(false);
 
 	function toggleSelectAll() {
 		if (isAllSelected) {
@@ -330,16 +346,60 @@
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
-			a.download = `ChekiYuume_Backup_${selectedSessions.length}_Sesi_${new Date().toISOString().slice(0, 10)}.zip`;
+			a.download = `ChekiYuume_Batch_Sessions_${Date.now()}.zip`;
+			document.body.appendChild(a);
 			a.click();
-			URL.revokeObjectURL(url);
-			saveMessage = `Berhasil mengunduh backup ${selectedSessions.length} sesi!`;
-			setTimeout(() => (saveMessage = ''), 4000);
-		} catch (err) {
-			console.error('Batch backup failed:', err);
-			alert('Gagal membuat paket ZIP batch backup.');
+			document.body.removeChild(a);
+			setTimeout(() => URL.revokeObjectURL(url), 10000);
+		} catch (err: any) {
+			alert(`Gagal membuat batch ZIP: ${err?.message || err}`);
 		} finally {
 			isExportingBatch = false;
+		}
+	}
+
+	async function handleMultiSelectCloudBackup() {
+		if (
+			formSettings.cloudProvider !== 'cloudinary' ||
+			!formSettings.cloudinaryCloudName?.trim() ||
+			!formSettings.cloudinaryUploadPreset?.trim()
+		) {
+			alert('Mohon lengkapi Cloud Name & Upload Preset Cloudinary di tab Cloud 30-Day terlebih dahulu.');
+			return;
+		}
+
+		const toUpload = selectedSessions.filter((s) => !s.cloudPhotoUrl && s.cloudUploadStatus !== 'success');
+		if (toUpload.length === 0) {
+			alert('Seluruh sesi yang Anda pilih sudah pernah di-backup ke Cloudinary. Tidak ada data baru yang perlu diunggah ulang.');
+			return;
+		}
+
+		isBackingUpSessions = true;
+		backupSessionProgress = `Mengunggah 0/${toUpload.length}...`;
+		try {
+			const res = await backupAllSessionsToCloudinary(
+				toUpload,
+				formSettings.cloudinaryCloudName,
+				formSettings.cloudinaryUploadPreset,
+				(curr, total, name) => {
+					backupSessionProgress = `Mengunggah ${curr}/${total} ${name || ''}...`;
+				},
+				{ skipAlreadyUploaded: true }
+			);
+
+			if (res.success) {
+				const skipMsg = res.skippedCount > 0 ? ` (${res.skippedCount} sesi sudah di cloud dilewati)` : '';
+				saveMessage = `Berhasil mencadangkan ${res.count} sesi terpilih ke Cloudinary${skipMsg}!`;
+				await loadSessions();
+			} else {
+				alert(res.error || 'Gagal mencadangkan sesi terpilih.');
+			}
+		} catch (err: any) {
+			alert(`Gagal mencadangkan sesi: ${err?.message || err}`);
+		} finally {
+			isBackingUpSessions = false;
+			backupSessionProgress = '';
+			setTimeout(() => (saveMessage = ''), 4000);
 		}
 	}
 
@@ -402,19 +462,6 @@
 		}
 	}
 
-	function handleViewResult(session: SessionData) {
-		// Populate active session store with this session and navigate to /result
-		sessionStore.initNewSession(session.mode, session.guestName, session.layoutId);
-		if (session.photostripDataUrl) {
-			sessionStore.setPhotostrip(session.photostripDataUrl, session.photostripBlob || new Blob());
-		}
-		if (session.videostripUrl && session.videostripBlob) {
-			sessionStore.setVideostrip(session.videostripBlob, session.videostripUrl);
-		}
-		sessionStore.setLayout(session.layoutId);
-		goto('/result');
-	}
-
 	let isSyncingSessions = $state(false);
 	let isBackingUpSessions = $state(false);
 	let backupSessionProgress = $state('');
@@ -434,19 +481,29 @@
 			return;
 		}
 
+		const toUpload = unbackedSessions;
+		if (toUpload.length === 0) {
+			const confirmReupload = confirm(
+				'Semua sesi lokal sudah tercatat di Cloudinary. Apakah Anda ingin tetap memeriksa & menyinkronkan ulang manifest Cloudinary?'
+			);
+			if (!confirmReupload) return;
+		}
+
 		isBackingUpSessions = true;
-		backupSessionProgress = `Mengunggah 0/${sessions.length}...`;
+		backupSessionProgress = `Memproses 0/${sessions.length}...`;
 		try {
 			const res = await backupAllSessionsToCloudinary(
 				sessions,
 				formSettings.cloudinaryCloudName,
 				formSettings.cloudinaryUploadPreset,
-				(curr, total) => {
-					backupSessionProgress = `Mengunggah ${curr}/${total}...`;
-				}
+				(curr, total, name) => {
+					backupSessionProgress = `Memproses ${curr}/${total} ${name || ''}...`;
+				},
+				{ skipAlreadyUploaded: true }
 			);
 			if (res.success) {
-				saveMessage = `Berhasil mencadangkan ${res.count} sesi ke Cloudinary (chekiyuume/sessions_manifest.json)!`;
+				const skipInfo = res.skippedCount > 0 ? ` (${res.skippedCount} sesi sudah di cloud dilewati)` : '';
+				saveMessage = `Berhasil mencadangkan ${res.count} sesi baru ke Cloudinary${skipInfo}!`;
 				await loadSessions();
 			} else {
 				alert(res.error || 'Gagal mencadangkan sesi ke Cloudinary.');
@@ -502,13 +559,27 @@
 							isOfflineSaved: true
 						});
 						addedCount++;
-					} else if (cs.photoUrl && !existing.photostripDataUrl && !existing.cloudPhotoUrl) {
-						existing.photostripDataUrl = cs.photoUrl;
-						existing.cloudPhotoUrl = cs.photoUrl;
-						if (cs.videoUrl && !existing.videostripUrl) existing.videostripUrl = cs.videoUrl;
-						if (cs.shareUrl && !existing.cloudShareUrl) existing.cloudShareUrl = cs.shareUrl;
-						await saveSessionToDB(existing);
-						updatedCount++;
+					} else {
+						let updated = false;
+						if (cs.photoUrl && existing.cloudPhotoUrl !== cs.photoUrl) {
+							existing.cloudPhotoUrl = cs.photoUrl;
+							existing.cloudUploadStatus = 'success';
+							if (!existing.photostripDataUrl) existing.photostripDataUrl = cs.photoUrl;
+							updated = true;
+						}
+						if (cs.videoUrl && existing.cloudVideoUrl !== cs.videoUrl) {
+							existing.cloudVideoUrl = cs.videoUrl;
+							if (!existing.videostripUrl) existing.videostripUrl = cs.videoUrl;
+							updated = true;
+						}
+						if (cs.shareUrl && existing.cloudShareUrl !== cs.shareUrl) {
+							existing.cloudShareUrl = cs.shareUrl;
+							updated = true;
+						}
+						if (updated) {
+							await saveSessionToDB(existing);
+							updatedCount++;
+						}
 					}
 				}
 
@@ -523,6 +594,78 @@
 			alert(`Gagal mengambil riwayat dari Cloud: ${err?.message || err}`);
 		} finally {
 			isSyncingSessions = false;
+			setTimeout(() => (saveMessage = ''), 4000);
+		}
+	}
+
+	async function handlePullSingleSession() {
+		if (
+			formSettings.cloudProvider !== 'cloudinary' ||
+			!formSettings.cloudinaryCloudName?.trim()
+		) {
+			alert('Mohon atur Cloudinary Cloud Name terlebih dahulu di tab Cloud 30-Day.');
+			return;
+		}
+
+		if (!singlePullQuery.trim()) {
+			alert('Mohon masukkan ID Sesi, Nama Folder, atau URL manifest.json');
+			return;
+		}
+
+		isPullingSingleSession = true;
+		try {
+			const res = await retrieveSessionBySessionId(
+				singlePullQuery,
+				formSettings.cloudinaryCloudName,
+				singlePullGuestName
+			);
+
+			if (res.success && res.session) {
+				const cs = res.session;
+				const existing = await getSessionFromDB(cs.sessionId);
+				if (existing) {
+					existing.cloudPhotoUrl = cs.photoUrl || existing.cloudPhotoUrl;
+					existing.cloudVideoUrl = cs.videoUrl || existing.cloudVideoUrl;
+					existing.cloudShareUrl = cs.shareUrl || existing.cloudShareUrl;
+					existing.cloudUploadStatus = 'success';
+					if (!existing.photostripDataUrl && cs.photoUrl) existing.photostripDataUrl = cs.photoUrl;
+					if (!existing.videostripUrl && cs.videoUrl) existing.videostripUrl = cs.videoUrl;
+					await saveSessionToDB(existing);
+				} else {
+					await saveSessionToDB({
+						sessionId: cs.sessionId,
+						guestName: cs.guestName || '',
+						createdAt: cs.createdAt || Date.now(),
+						mode: (cs.mode as any) || 'default',
+						layoutId: cs.layoutId || 'default-4-classic',
+						photos: [],
+						assignedSlotPhotoIds: [],
+						stickers: [],
+						photostripDataUrl: cs.photoUrl || '',
+						photostripBlob: null,
+						videostripBlob: null,
+						videostripUrl: cs.videoUrl || null,
+						printCount: 0,
+						cloudUploadStatus: 'success',
+						cloudPhotoUrl: cs.photoUrl || null,
+						cloudVideoUrl: cs.videoUrl || null,
+						cloudShareUrl: cs.shareUrl || null,
+						isOfflineSaved: true
+					});
+				}
+
+				await loadSessions();
+				saveMessage = `Berhasil menarik sesi ${cs.sessionId} (${cs.guestName || 'Tamu'}) dari Cloudinary!`;
+				isSinglePullModalOpen = false;
+				singlePullQuery = '';
+				singlePullGuestName = '';
+			} else {
+				alert(res.error || 'Gagal menarik sesi dari Cloudinary.');
+			}
+		} catch (err: any) {
+			alert(`Gagal menarik sesi: ${err?.message || err}`);
+		} finally {
+			isPullingSingleSession = false;
 			setTimeout(() => (saveMessage = ''), 4000);
 		}
 	}
@@ -797,7 +940,7 @@
 				class="flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all cursor-pointer {activeTab === 'general' ? 'bg-rose-500 text-white shadow-md' : 'text-zinc-400 hover:text-white'}"
 			>
 				<Settings2 class="h-4 w-4" />
-				<span>Booth & Print</span>
+				<span>Pengaturan Kiosk</span>
 			</button>
 			<button
 				type="button"
@@ -850,14 +993,17 @@
 							onclick={handleBackupSessionsToCloud}
 							disabled={isBackingUpSessions || sessions.length === 0}
 							class="flex items-center gap-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600 border border-purple-500/40 px-3.5 py-2 text-xs font-bold text-purple-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
-							title="Cadangkan seluruh ({sessions.length}) riwayat sesi lokal ke Cloudinary agar bisa diunduh device lain"
+							title="Cadangkan riwayat sesi lokal ke Cloudinary (sesi yang sudah ada di cloud akan dilewati otomatis)"
 						>
 							{#if isBackingUpSessions}
 								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
 								<span>{backupSessionProgress || 'Mencadangkan...'}</span>
+							{:else if unbackedSessions.length === 0}
+								<CheckCircle2 class="h-3.5 w-3.5 text-emerald-400" />
+								<span>Semua Sesi di Cloud ({sessions.length})</span>
 							{:else}
 								<CloudUpload class="h-3.5 w-3.5" />
-								<span>Backup ke Cloud ({sessions.length})</span>
+								<span>Backup ke Cloud ({unbackedSessions.length})</span>
 							{/if}
 						</button>
 
@@ -876,6 +1022,17 @@
 								<CloudDownload class="h-3.5 w-3.5" />
 								<span>Tarik dari Cloud</span>
 							{/if}
+						</button>
+
+						<!-- Pull Specific Session via ID / Manifest -->
+						<button
+							type="button"
+							onclick={() => (isSinglePullModalOpen = true)}
+							class="flex items-center gap-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600 border border-amber-500/40 px-3.5 py-2 text-xs font-bold text-amber-300 hover:text-white transition-all cursor-pointer"
+							title="Tarik sesi spesifik dari Cloudinary menggunakan ID Sesi atau URL manifest.json"
+						>
+							<FileJson class="h-3.5 w-3.5" />
+							<span>Tarik via ID / Manifest</span>
 						</button>
 
 						<!-- Global Batch Backup All -->
@@ -913,10 +1070,35 @@
 							</div>
 							<span class="text-xs font-bold text-white">
 								{selectedSessionIds.length} sesi terpilih dari {filteredSessions.length} sesi yang ditampilkan
+								{#if selectedUnbackedSessions.length > 0}
+									<span class="text-amber-300 ml-1">({selectedUnbackedSessions.length} belum di cloud)</span>
+								{:else}
+									<span class="text-emerald-400 ml-1">(semua sudah di cloud)</span>
+								{/if}
 							</span>
 						</div>
 
 						<div class="flex items-center gap-2">
+							<!-- Multi-Select Cloud Backup -->
+							<button
+								type="button"
+								onclick={handleMultiSelectCloudBackup}
+								disabled={isBackingUpSessions || selectedUnbackedSessions.length === 0}
+								class="flex items-center gap-1.5 rounded-xl bg-purple-500 hover:bg-purple-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all cursor-pointer disabled:opacity-50"
+								title="Upload sesi terpilih ke Cloudinary (sesi yang sudah ada di cloud dilewati otomatis)"
+							>
+								{#if isBackingUpSessions}
+									<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+									<span>{backupSessionProgress || 'Mengunggah...'}</span>
+								{:else if selectedUnbackedSessions.length === 0}
+									<CheckCircle2 class="h-3.5 w-3.5 text-emerald-300" />
+									<span>Terpilih Sudah di Cloud</span>
+								{:else}
+									<CloudUpload class="h-3.5 w-3.5" />
+									<span>Backup Terpilih ke Cloud ({selectedUnbackedSessions.length})</span>
+								{/if}
+							</button>
+
 							<!-- Multi-Select Backup ZIP -->
 							<button
 								type="button"
@@ -975,6 +1157,7 @@
 								<th class="py-3 px-4">Nama Sesi / Tamu</th>
 								<th class="py-3 px-4">Mode</th>
 								<th class="py-3 px-4">ID Sesi</th>
+								<th class="py-3 px-4">Status Cloud</th>
 								<th class="py-3 px-4">Jumlah Foto</th>
 								<th class="py-3 px-4">Status Cetak</th>
 								<th class="py-3 px-4 text-right">Aksi</th>
@@ -983,7 +1166,7 @@
 						<tbody class="divide-y divide-zinc-800/60">
 							{#if filteredSessions.length === 0}
 								<tr>
-									<td colspan="8" class="py-8 text-center text-zinc-500">
+									<td colspan="9" class="py-8 text-center text-zinc-500">
 										Belum ada riwayat sesi tersimpan.
 									</td>
 								</tr>
@@ -1015,6 +1198,28 @@
 											{s.sessionId}
 										</td>
 										<td class="py-3 px-4">
+											{#if s.cloudPhotoUrl || s.cloudUploadStatus === 'success'}
+												<a
+													href={s.cloudPhotoUrl || s.cloudShareUrl || '#'}
+													target="_blank"
+													rel="noopener noreferrer"
+													class="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-bold hover:bg-emerald-500/30 transition-colors"
+													title="Tersimpan di Cloudinary. Klik untuk membuka file foto."
+												>
+													<Cloud class="h-3 w-3" />
+													<span>Di Cloud</span>
+												</a>
+											{:else}
+												<span
+													class="inline-flex items-center gap-1 rounded-md bg-zinc-800 text-zinc-500 border border-zinc-700/60 px-2 py-0.5 text-[10px] font-medium"
+													title="Hanya tersimpan di memori lokal kios"
+												>
+													<HardDrive class="h-3 w-3" />
+													<span>Hanya Lokal</span>
+												</span>
+											{/if}
+										</td>
+										<td class="py-3 px-4">
 											{s.photos.length} Foto
 										</td>
 										<td class="py-3 px-4">
@@ -1026,16 +1231,6 @@
 										</td>
 										<td class="py-3 px-4 text-right">
 											<div class="flex items-center justify-end gap-2">
-												<!-- View Result Screen -->
-												<button
-													type="button"
-													onclick={() => handleViewResult(s)}
-													class="rounded-lg bg-rose-500/20 hover:bg-rose-500 border border-rose-500/30 p-2 text-rose-300 hover:text-white cursor-pointer transition-colors"
-													title="Buka Layar Hasil (Result Screen)"
-												>
-													<Eye class="h-3.5 w-3.5" />
-												</button>
-
 												<!-- Open Guest Share Link -->
 												<a
 													href="/share/{s.sessionId}"
@@ -1598,91 +1793,148 @@
 			</div>
 
 		{:else if activeTab === 'general'}
-			<!-- Tab 4: Booth & Printing Settings -->
-			<div class="max-w-2xl bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl flex flex-col gap-5">
-				<h2 class="text-lg font-bold text-white font-display">Pengaturan Booth & Print Default</h2>
-
-				<div>
-					<label for="kiosk-title-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Judul Utama Booth</label>
-					<input
-						id="kiosk-title-input"
-						type="text"
-						bind:value={formSettings.kioskTitle}
-						placeholder="CHEKIYUUME"
-						class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
-					/>
-				</div>
-
-				<div>
-					<label for="kiosk-sub-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Sub-Judul / Nama Studio</label>
-					<input
-						id="kiosk-sub-input"
-						type="text"
-						bind:value={formSettings.kioskSubtitle}
-						placeholder="PHOTOBOOTH STUDIO"
-						class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
-					/>
-				</div>
-
-				<div class="grid grid-cols-2 gap-4">
+			<!-- Tab 4: Kiosk & Operational Settings -->
+			<div class="flex flex-col gap-6 max-w-5xl">
+				<!-- Header Title -->
+				<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
 					<div>
-						<label for="countdown-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Countdown Hitung Mundur (Detik)</label>
-						<select
-							id="countdown-select"
-							bind:value={formSettings.countdownSeconds}
-							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
-						>
-							<option value={3}>3 Detik (Sangat Cepat)</option>
-							<option value={5}>5 Detik (Standar)</option>
-							<option value={7}>7 Detik (Santai)</option>
-						</select>
-					</div>
-
-					<div>
-						<label for="reset-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Auto-Reset Result Screen</label>
-						<select
-							id="reset-select"
-							bind:value={formSettings.autoResetSeconds}
-							class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
-						>
-							<option value={30}>30 Detik</option>
-							<option value={60}>60 Detik</option>
-							<option value={90}>90 Detik (Standar)</option>
-						</select>
+						<h2 class="text-xl font-black text-white font-display flex items-center gap-2.5">
+							<Settings2 class="h-5 w-5 text-rose-400" />
+							<span>Pengaturan Operasional Kiosk</span>
+						</h2>
+						<p class="text-xs text-zinc-400 mt-0.5">
+							Konfigurasi alur sesi foto, hitung mundur, audio interaktif, keamanan PIN admin, dan identitas booth
+						</p>
 					</div>
 				</div>
 
-				<div>
-					<label for="admin-pin-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">PIN Akses Admin</label>
-					<input
-						id="admin-pin-input"
-						type="password"
-						bind:value={formSettings.adminPin}
-						placeholder="1234"
-						class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
-					/>
-				</div>
+				<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+					<!-- Card 1: Alur Sesi & Pengalaman Tamu -->
+					<div class="bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl flex flex-col gap-5">
+						<div class="flex items-center gap-2 pb-3 border-b border-zinc-800 text-sm font-bold text-white">
+							<Clock class="h-4 w-4 text-amber-400" />
+							<span>Alur Sesi & Interaksi Tamu</span>
+						</div>
 
-				<div class="flex items-center justify-between py-2 border-t border-zinc-800">
-					<div>
-						<span class="text-xs font-bold text-white">Efek Suara (Audio Beeps & Shutter)</span>
-						<p class="text-[11px] text-zinc-400">Bunyi hitung mundur dan simulasi klik kamera</p>
+						<div>
+							<label for="countdown-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
+								Countdown Hitung Mundur (Detik)
+							</label>
+							<select
+								id="countdown-select"
+								bind:value={formSettings.countdownSeconds}
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							>
+								<option value={3}>3 Detik (Sangat Cepat - Fast Flow)</option>
+								<option value={5}>5 Detik (Standar - Direkomendasikan)</option>
+								<option value={7}>7 Detik (Santai - Waktu Pose Lebih Lama)</option>
+							</select>
+							<p class="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">
+								Waktu tunggu antar jepretan pose. Nilai ini juga otomatis menjadi durasi rekaman video BTS per slot.
+							</p>
+						</div>
+
+						<div>
+							<label for="reset-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
+								Auto-Reset Layar Hasil Sesi
+							</label>
+							<select
+								id="reset-select"
+								bind:value={formSettings.autoResetSeconds}
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							>
+								<option value={30}>30 Detik (Event Sangat Ramai)</option>
+								<option value={60}>60 Detik (1 Menit)</option>
+								<option value={90}>90 Detik (Standar - Rekomendasi Kios)</option>
+								<option value={120}>120 Detik (2 Menit - Waktu Unduh Lebih Lama)</option>
+							</select>
+							<p class="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">
+								Layar hasil foto akan menghitung mundur dan otomatis kembali ke halaman awal agar siap untuk tamu berikutnya.
+							</p>
+						</div>
+
+						<div class="rounded-2xl bg-zinc-950/60 border border-zinc-800/80 p-4 flex items-center justify-between gap-4 mt-1">
+							<div>
+								<span class="text-xs font-bold text-white block">Efek Suara Interaktif</span>
+								<p class="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+									Bunyi beeps hitung mundur, audio shutter kamera, dan suara perayaan selesai foto
+								</p>
+							</div>
+							<input
+								type="checkbox"
+								bind:checked={formSettings.enableSound}
+								class="h-5 w-5 rounded-md accent-rose-500 cursor-pointer shrink-0"
+							/>
+						</div>
 					</div>
-					<input
-						type="checkbox"
-						bind:checked={formSettings.enableSound}
-						class="h-5 w-5 rounded-md accent-rose-500 cursor-pointer"
-					/>
+
+					<!-- Card 2: Keamanan & Identitas Booth -->
+					<div class="bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 shadow-xl flex flex-col gap-5">
+						<div class="flex items-center gap-2 pb-3 border-b border-zinc-800 text-sm font-bold text-white">
+							<Shield class="h-4 w-4 text-rose-400" />
+							<span>Keamanan & Identitas Booth</span>
+						</div>
+
+						<div>
+							<label for="admin-pin-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
+								PIN Akses Admin Dashboard
+							</label>
+							<div class="relative">
+								<input
+									id="admin-pin-input"
+									type="password"
+									bind:value={formSettings.adminPin}
+									placeholder="1234"
+									class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white font-mono tracking-widest focus:border-rose-500 focus:outline-hidden"
+								/>
+							</div>
+							<p class="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">
+								PIN untuk membuka menu admin dari tombol tersembunyi di pojok kanan atas layar utama.
+							</p>
+						</div>
+
+						<div>
+							<label for="kiosk-title-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
+								Judul Utama Booth (Branding Teks)
+							</label>
+							<input
+								id="kiosk-title-input"
+								type="text"
+								bind:value={formSettings.kioskTitle}
+								placeholder="CHEKIYUUME"
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							/>
+							<p class="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">
+								Teks judul yang dicetak di bagian bawah layout standar jika frame tidak memakai gambar custom.
+							</p>
+						</div>
+
+						<div>
+							<label for="kiosk-sub-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
+								Sub-Judul / Nama Studio
+							</label>
+							<input
+								id="kiosk-sub-input"
+								type="text"
+								bind:value={formSettings.kioskSubtitle}
+								placeholder="PHOTOBOOTH STUDIO"
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							/>
+						</div>
+					</div>
 				</div>
 
-				<button
-					type="button"
-					onclick={handleSaveSettings}
-					class="w-full flex items-center justify-center gap-2 rounded-2xl bg-rose-500 hover:bg-rose-600 py-3.5 text-xs font-bold text-white shadow-lg shadow-rose-500/20 transition-all cursor-pointer mt-4"
-				>
-					<Save class="h-4 w-4" />
-					<span>Simpan Pengaturan Booth</span>
-				</button>
+				<!-- Save Button -->
+				<div class="flex justify-end">
+					<button
+						type="button"
+						onclick={handleSaveSettings}
+						class="w-full sm:w-auto min-w-[240px] flex items-center justify-center gap-2 rounded-2xl bg-rose-500 hover:bg-rose-600 py-3.5 px-8 text-xs font-bold text-white shadow-lg shadow-rose-500/25 active:scale-98 transition-all cursor-pointer"
+					>
+						<Save class="h-4 w-4" />
+						<span>Simpan Pengaturan Kiosk</span>
+					</button>
+				</div>
 			</div>
 
 		{:else if activeTab === 'cloud'}
@@ -2078,6 +2330,95 @@
 					>
 						<Save class="h-4 w-4" />
 						<span>Simpan Frame</span>
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Modal Tarik Sesi via ID / Manifest Cloudinary -->
+	{#if isSinglePullModalOpen}
+		<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+			<div class="flex flex-col w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl">
+				<!-- Header -->
+				<div class="flex items-center justify-between pb-4 border-b border-zinc-800">
+					<div class="flex items-center gap-2.5">
+						<div class="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+							<FileJson class="h-5 w-5" />
+						</div>
+						<div>
+							<h3 class="text-sm font-bold text-white">Tarik Sesi via ID / Manifest Cloudinary</h3>
+							<p class="text-[11px] text-zinc-400">Impor sesi langsung dari folder Cloudinary menggunakan manifest.json</p>
+						</div>
+					</div>
+					<button
+						type="button"
+						onclick={() => (isSinglePullModalOpen = false)}
+						class="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
+					>
+						<X class="h-4 w-4" />
+					</button>
+				</div>
+
+				<!-- Body -->
+				<div class="flex flex-col gap-4 py-4">
+					<div class="flex flex-col gap-1.5">
+						<label for="single-pull-id" class="text-xs font-bold text-zinc-300">
+							ID Sesi, Nama Folder, atau URL Manifest <span class="text-rose-400">*</span>
+						</label>
+						<input
+							id="single-pull-id"
+							type="text"
+							bind:value={singlePullQuery}
+							placeholder="Contoh: 20260827_123456 atau budi_20260827_123456 atau https://res.cloudinary.com/.../manifest.json"
+							class="w-full rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2.5 text-xs text-white placeholder-zinc-500 focus:border-amber-500 focus:outline-hidden font-mono"
+						/>
+						<p class="text-[10px] text-zinc-500">
+							Sistem akan membaca berkas <code>manifest.json</code> sesi tersebut di Cloudinary dan menyimpannya ke database lokal.
+						</p>
+					</div>
+
+					<div class="flex flex-col gap-1.5">
+						<label for="single-pull-guest" class="text-xs font-bold text-zinc-300">
+							Nama Tamu (Opsional)
+						</label>
+						<input
+							id="single-pull-guest"
+							type="text"
+							bind:value={singlePullGuestName}
+							placeholder="Contoh: budi (kosongkan jika ID sesi sudah berupa nama folder)"
+							class="w-full rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2.5 text-xs text-white placeholder-zinc-500 focus:border-amber-500 focus:outline-hidden"
+						/>
+					</div>
+
+					<div class="rounded-2xl bg-amber-500/10 border border-amber-500/20 p-3 text-[11px] text-amber-300 leading-relaxed">
+						Cloudinary aktif: <strong class="text-white font-mono">{formSettings.cloudinaryCloudName || 'Belum diatur'}</strong>.
+						Pastikan folder sesi di Cloudinary memiliki berkas <code>manifest.json</code>.
+					</div>
+				</div>
+
+				<!-- Footer -->
+				<div class="pt-4 border-t border-zinc-800 flex items-center justify-end gap-2.5">
+					<button
+						type="button"
+						onclick={() => (isSinglePullModalOpen = false)}
+						class="rounded-xl bg-zinc-800 hover:bg-zinc-700 px-4 py-2 text-xs font-bold text-zinc-300 cursor-pointer"
+					>
+						Batal
+					</button>
+					<button
+						type="button"
+						onclick={handlePullSingleSession}
+						disabled={isPullingSingleSession || !singlePullQuery.trim()}
+						class="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-5 py-2 text-xs font-bold text-zinc-950 shadow-md transition-all cursor-pointer disabled:opacity-50"
+					>
+						{#if isPullingSingleSession}
+							<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+							<span>Menarik Sesi...</span>
+						{:else}
+							<CloudDownload class="h-3.5 w-3.5" />
+							<span>Tarik & Simpan ke Lokal</span>
+						{/if}
 					</button>
 				</div>
 			</div>

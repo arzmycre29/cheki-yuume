@@ -180,7 +180,7 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 
 		if (i === activeSlot) {
 			const video = preloadedVideos.get(i);
-			if (video && video.readyState >= 2 && video.videoWidth > 0) {
+			if (video && video.videoWidth > 0) {
 				drawToSlot(ctx, video, slot, isMirrored);
 			} else {
 				const photo = preloadedImages.get(i);
@@ -362,12 +362,58 @@ export async function compileSequentialVideostrip(
 		guestName
 	};
 
-	// Start all videos upfront
-	preloadedVideos.forEach((vid) => {
-		vid.currentTime = 0;
-		vid.play().catch(() => {});
-	});
-	await new Promise((r) => setTimeout(r, 100));
+	// Attach hidden container to DOM so browser hardware decoder keeps video active
+	let hiddenContainer: HTMLDivElement | null = null;
+	if (typeof document !== 'undefined') {
+		hiddenContainer = document.createElement('div');
+		hiddenContainer.setAttribute('aria-hidden', 'true');
+		hiddenContainer.style.cssText =
+			'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-99999;overflow:hidden;';
+		document.body.appendChild(hiddenContainer);
+		preloadedVideos.forEach((vid) => {
+			hiddenContainer!.appendChild(vid);
+		});
+	}
+
+	function cleanup() {
+		preloadedVideos.forEach((v) => {
+			try {
+				v.pause();
+			} catch (_) {}
+		});
+		if (hiddenContainer && hiddenContainer.parentNode) {
+			hiddenContainer.parentNode.removeChild(hiddenContainer);
+			hiddenContainer = null;
+		}
+	}
+
+	function activateSlotVideo(slotIdx: number) {
+		preloadedVideos.forEach((vid, idx) => {
+			if (idx !== slotIdx) {
+				try {
+					vid.pause();
+				} catch (_) {}
+			}
+		});
+
+		const currentVid = preloadedVideos.get(slotIdx);
+		if (currentVid) {
+			try {
+				// Scale playback rate so video duration matches segment duration smoothly
+				if (Number.isFinite(currentVid.duration) && currentVid.duration > 0 && segmentDuration > 0) {
+					const targetRate = currentVid.duration / segmentDuration;
+					currentVid.playbackRate = Math.min(Math.max(targetRate, 0.25), 4.0);
+				} else {
+					currentVid.playbackRate = 1.0;
+				}
+				currentVid.currentTime = 0;
+				const playPromise = currentVid.play();
+				if (playPromise !== undefined) {
+					playPromise.catch((e) => console.warn('[VideoCompiler] Video play failed on slot', slotIdx, e));
+				}
+			} catch (_) {}
+		}
+	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// WebCodecs Real-Time Render Pipeline
@@ -435,7 +481,7 @@ export async function compileSequentialVideostrip(
 				function drawFrame() {
 					try {
 						if (encoderFailed) {
-							preloadedVideos.forEach((v) => v.pause());
+							cleanup();
 							try {
 								encoder.close();
 							} catch (_) {}
@@ -464,13 +510,16 @@ export async function compileSequentialVideostrip(
 						);
 						const activeSlot = activeSlots[currentActiveIndex];
 
-						// Reset video time when segment changes
+						// Activate video playback on segment change
 						if (currentActiveIndex !== prevActiveIndex) {
-							const vid = preloadedVideos.get(activeSlot);
-							if (vid) {
-								vid.currentTime = 0;
-							}
+							activateSlotVideo(activeSlot);
 							prevActiveIndex = currentActiveIndex;
+						} else {
+							// Ensure active video is playing if paused
+							const activeVid = preloadedVideos.get(activeSlot);
+							if (activeVid && activeVid.paused && !activeVid.ended) {
+								activeVid.play().catch(() => {});
+							}
 						}
 
 						// Draw the composite photostrip
@@ -498,13 +547,13 @@ export async function compileSequentialVideostrip(
 							finishEncoding();
 						}
 					} catch (loopErr) {
-						preloadedVideos.forEach((v) => v.pause());
+						cleanup();
 						reject(loopErr);
 					}
 				}
 
 				function finishEncoding() {
-					preloadedVideos.forEach((v) => v.pause());
+					cleanup();
 
 					encoder
 						.flush()
@@ -548,7 +597,7 @@ export async function compileSequentialVideostrip(
 		};
 
 		recorder.onstop = () => {
-			preloadedVideos.forEach((v) => v.pause());
+			cleanup();
 			if (chunks.length === 0) {
 				reject(new Error('MediaRecorder: no chunks produced'));
 				return;
@@ -559,7 +608,7 @@ export async function compileSequentialVideostrip(
 		};
 
 		recorder.onerror = (e) => {
-			preloadedVideos.forEach((v) => v.pause());
+			cleanup();
 			reject(e);
 		};
 
@@ -578,9 +627,13 @@ export async function compileSequentialVideostrip(
 			const activeSlot = activeSlots[currentActiveIndex];
 
 			if (currentActiveIndex !== prevActiveIndex) {
-				const vid = preloadedVideos.get(activeSlot);
-				if (vid) vid.currentTime = 0;
+				activateSlotVideo(activeSlot);
 				prevActiveIndex = currentActiveIndex;
+			} else {
+				const activeVid = preloadedVideos.get(activeSlot);
+				if (activeVid && activeVid.paused && !activeVid.ended) {
+					activeVid.play().catch(() => {});
+				}
 			}
 
 			drawCompositeFrame({ ...baseDrawOpts, activeSlot });

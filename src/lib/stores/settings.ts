@@ -11,13 +11,25 @@ const defaultSettings: KioskSettings = {
 	countdownSeconds: 5,
 	btsDurationSeconds: 3,
 	autoResetSeconds: 60,
-	adminPin: '1234',
+	adminPin:
+		(typeof import.meta !== 'undefined' &&
+			(import.meta.env?.PUBLIC_ADMIN_PIN || import.meta.env?.VITE_ADMIN_PIN)) ||
+		'1234',
 	kioskTitle: 'CHEKIYUUME',
 	kioskSubtitle: 'PHOTOBOOTH STUDIO',
 	cloudProvider: 'cloudinary',
-	cloudinaryCloudName: '',
-	cloudinaryUploadPreset: '',
-	cloudPublicBaseUrl: '',
+	cloudinaryCloudName:
+		(typeof import.meta !== 'undefined' &&
+			(import.meta.env?.PUBLIC_CLOUDINARY_CLOUD_NAME || import.meta.env?.VITE_CLOUDINARY_CLOUD_NAME)) ||
+		'',
+	cloudinaryUploadPreset:
+		(typeof import.meta !== 'undefined' &&
+			(import.meta.env?.PUBLIC_CLOUDINARY_UPLOAD_PRESET || import.meta.env?.VITE_CLOUDINARY_UPLOAD_PRESET)) ||
+		'',
+	cloudPublicBaseUrl:
+		(typeof import.meta !== 'undefined' &&
+			(import.meta.env?.PUBLIC_SHARE_BASE_URL || import.meta.env?.VITE_SHARE_BASE_URL)) ||
+		'',
 	cloudEndpoint: '',
 	cloudBucket: '',
 	cloudAccessKey: '',

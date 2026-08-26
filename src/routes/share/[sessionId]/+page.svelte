@@ -2,8 +2,20 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { getSessionFromDB } from '$lib/services/db';
+	import { generateQrCodeDataUrl } from '$lib/services/cloudStorage';
 	import type { SessionData } from '$lib/types';
-	import { Download, Film, Image as ImageIcon, Sparkles, Clock, CheckCircle2, Loader2 } from '@lucide/svelte';
+	import {
+		Download,
+		Film,
+		Image as ImageIcon,
+		Sparkles,
+		Clock,
+		CheckCircle2,
+		Loader2,
+		QrCode,
+		FolderDown,
+		Check
+	} from '@lucide/svelte';
 
 	let sessionId = $derived(page.params.sessionId);
 	let queryPhoto = $derived(page.url.searchParams.get('p') || page.url.searchParams.get('photo'));
@@ -14,6 +26,10 @@
 	let isLoading = $state(true);
 	let isDownloadingPhoto = $state(false);
 	let isDownloadingVideo = $state(false);
+	let isDownloadingQr = $state(false);
+	let isDownloadingAll = $state(false);
+	let downloadAllProgress = $state('');
+	let qrCodeDataUrl = $state<string | null>(null);
 
 	let effectivePhotoUrl = $derived(queryPhoto || session?.cloudPhotoUrl || session?.photostripDataUrl);
 	let effectiveVideoUrl = $derived(queryVideo || session?.cloudVideoUrl || session?.videostripUrl);
@@ -28,42 +44,57 @@
 				console.warn('[Share] No local IndexedDB session found, relying on query params / cloud:', e);
 			}
 		}
+
+		if (typeof window !== 'undefined') {
+			try {
+				qrCodeDataUrl = await generateQrCodeDataUrl(window.location.href);
+			} catch (qrErr) {
+				console.warn('[Share] Failed to generate QR code:', qrErr);
+			}
+		}
+
 		isLoading = false;
 	});
 
-	async function downloadPhoto() {
-		if (!effectivePhotoUrl || isDownloadingPhoto) return;
-		isDownloadingPhoto = true;
+	async function triggerDirectDownload(url: string, filename: string): Promise<void> {
+		if (url.startsWith('data:')) {
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = filename;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			return;
+		}
 
 		try {
-			// If it's already a data: URL
-			if (effectivePhotoUrl.startsWith('data:')) {
-				const a = document.createElement('a');
-				a.href = effectivePhotoUrl;
-				a.download = `ChekiYuume_${sessionId}.png`;
-				a.click();
-				isDownloadingPhoto = false;
-				return;
-			}
-
-			// Remote URL: Fetch blob to force instant browser download
-			const res = await fetch(effectivePhotoUrl);
+			const res = await fetch(url);
 			const blob = await res.blob();
 			const blobUrl = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = blobUrl;
-			a.download = `ChekiYuume_${sessionId}.png`;
+			a.download = filename;
 			document.body.appendChild(a);
 			a.click();
 			document.body.removeChild(a);
 			setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
 		} catch (err) {
-			console.warn('[Share] Blob fetch download failed, fallback to direct open:', err);
+			console.warn('[Share] Direct blob download failed, fallback to direct open:', err);
 			const a = document.createElement('a');
-			a.href = effectivePhotoUrl;
+			a.href = url;
 			a.target = '_blank';
-			a.download = `ChekiYuume_${sessionId}.png`;
+			a.download = filename;
+			document.body.appendChild(a);
 			a.click();
+			document.body.removeChild(a);
+		}
+	}
+
+	async function downloadPhoto() {
+		if (!effectivePhotoUrl || isDownloadingPhoto) return;
+		isDownloadingPhoto = true;
+		try {
+			await triggerDirectDownload(effectivePhotoUrl, `ChekiYuume_${sessionId}_photo.png`);
 		} finally {
 			isDownloadingPhoto = false;
 		}
@@ -72,36 +103,70 @@
 	async function downloadVideo() {
 		if (!effectiveVideoUrl || isDownloadingVideo) return;
 		isDownloadingVideo = true;
-
 		try {
-			if (effectiveVideoUrl.startsWith('data:') || effectiveVideoUrl.startsWith('blob:')) {
-				const a = document.createElement('a');
-				a.href = effectiveVideoUrl;
-				a.download = `ChekiYuume_${sessionId}.mp4`;
-				a.click();
-				isDownloadingVideo = false;
-				return;
-			}
-
-			const res = await fetch(effectiveVideoUrl);
-			const blob = await res.blob();
-			const blobUrl = URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = blobUrl;
-			a.download = `ChekiYuume_${sessionId}.mp4`;
-			document.body.appendChild(a);
-			a.click();
-			document.body.removeChild(a);
-			setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-		} catch (err) {
-			console.warn('[Share] Video blob fetch download failed, fallback to direct open:', err);
-			const a = document.createElement('a');
-			a.href = effectiveVideoUrl;
-			a.target = '_blank';
-			a.download = `ChekiYuume_${sessionId}.mp4`;
-			a.click();
+			await triggerDirectDownload(effectiveVideoUrl, `ChekiYuume_${sessionId}_video.mp4`);
 		} finally {
 			isDownloadingVideo = false;
+		}
+	}
+
+	async function downloadQrCode() {
+		if (!qrCodeDataUrl || isDownloadingQr) return;
+		isDownloadingQr = true;
+		try {
+			await triggerDirectDownload(qrCodeDataUrl, `ChekiYuume_${sessionId}_qr.png`);
+		} finally {
+			isDownloadingQr = false;
+		}
+	}
+
+	async function downloadAllSequential() {
+		if (isDownloadingAll) return;
+		isDownloadingAll = true;
+
+		try {
+			const tasks: { name: string; action: () => Promise<void> }[] = [];
+
+			if (effectivePhotoUrl) {
+				tasks.push({
+					name: 'Foto Photostrip',
+					action: () => triggerDirectDownload(effectivePhotoUrl!, `ChekiYuume_${sessionId}_photo.png`)
+				});
+			}
+
+			if (effectiveVideoUrl) {
+				tasks.push({
+					name: 'Video BTS',
+					action: () => triggerDirectDownload(effectiveVideoUrl!, `ChekiYuume_${sessionId}_video.mp4`)
+				});
+			}
+
+			if (qrCodeDataUrl) {
+				tasks.push({
+					name: 'QR Code Akses',
+					action: () => triggerDirectDownload(qrCodeDataUrl!, `ChekiYuume_${sessionId}_qr.png`)
+				});
+			}
+
+			for (let i = 0; i < tasks.length; i++) {
+				const task = tasks[i];
+				downloadAllProgress = `(${i + 1}/${tasks.length}) Mengunduh ${task.name}...`;
+				await task.action();
+				// Give browser time to process before initiating next download
+				if (i < tasks.length - 1) {
+					await new Promise((resolve) => setTimeout(resolve, 800));
+				}
+			}
+
+			downloadAllProgress = '✓ Semua berkas berhasil diunduh!';
+			setTimeout(() => {
+				downloadAllProgress = '';
+			}, 4000);
+		} catch (err) {
+			console.error('[Share] Sequential download error:', err);
+			alert('Pengunduhan selesai. Silakan periksa folder Download atau galeri perangkat kamu.');
+		} finally {
+			isDownloadingAll = false;
 		}
 	}
 </script>
@@ -136,6 +201,39 @@
 					<Clock class="h-3.5 w-3.5 text-amber-400" />
 					<span>Tersimpan aman di Cloud Gallery</span>
 				</div>
+			</div>
+
+			<!-- Batch Sequential Download Card -->
+			<div class="w-full flex flex-col items-center rounded-3xl bg-gradient-to-br from-rose-950/40 via-zinc-900 to-indigo-950/40 border border-rose-500/30 p-5 shadow-2xl text-center">
+				<div class="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-rose-300 mb-1">
+					<FolderDown class="h-4 w-4" />
+					<span>Unduh Semua Berkas Sekaligus</span>
+				</div>
+				<p class="text-[11px] text-zinc-400 mb-4 max-w-sm">
+					Unduh Foto Photostrip, Video BTS, dan QR Akses satu per satu secara berurutan langsung ke galeri HP tanpa file ZIP.
+				</p>
+
+				<button
+					type="button"
+					onclick={downloadAllSequential}
+					disabled={isDownloadingAll}
+					class="w-full flex items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-rose-500 to-indigo-600 hover:from-rose-600 hover:to-indigo-700 py-3.5 px-6 text-sm font-black text-white shadow-xl shadow-rose-500/20 active:scale-98 transition-all cursor-pointer disabled:opacity-75"
+				>
+					{#if isDownloadingAll}
+						<Loader2 class="h-4 w-4 animate-spin" />
+						<span>{downloadAllProgress || 'Mengunduh berurutan...'}</span>
+					{:else}
+						<Download class="h-4 w-4" />
+						<span>Download Semua Berkas (Berurutan)</span>
+					{/if}
+				</button>
+
+				{#if downloadAllProgress && !isDownloadingAll}
+					<div class="mt-2.5 inline-flex items-center gap-1.5 text-xs text-emerald-400 font-bold animate-in fade-in duration-200">
+						<Check class="h-3.5 w-3.5" />
+						<span>{downloadAllProgress}</span>
+					</div>
+				{/if}
 			</div>
 
 			<!-- Photostrip Section -->
@@ -199,6 +297,38 @@
 						{:else}
 							<Download class="h-4 w-4" />
 							<span>Unduh Video (MP4)</span>
+						{/if}
+					</button>
+				</div>
+			{/if}
+
+			<!-- QR Code Section -->
+			{#if qrCodeDataUrl}
+				<div class="w-full flex flex-col items-center rounded-3xl bg-zinc-900 border border-zinc-800 p-5 shadow-2xl">
+					<div class="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-zinc-300 mb-2 self-start">
+						<QrCode class="h-4 w-4 text-amber-400" />
+						<span>QR Code Akses Galeri</span>
+					</div>
+					<p class="text-[11px] text-zinc-400 mb-4 self-start leading-relaxed">
+						Simpan gambar QR Code ini ke galeri HP agar kamu bisa scan atau membuka kembali link galeri ini kapan saja tanpa takut kehilangan tautan.
+					</p>
+
+					<div class="bg-white p-3 rounded-2xl shadow-lg border border-zinc-200 my-1 inline-block">
+						<img src={qrCodeDataUrl} alt="QR Code Galeri" class="h-36 w-36 object-contain" />
+					</div>
+
+					<button
+						type="button"
+						onclick={downloadQrCode}
+						disabled={isDownloadingQr}
+						class="w-full mt-4 flex items-center justify-center gap-2 rounded-2xl bg-amber-500 hover:bg-amber-600 py-3.5 px-6 text-sm font-bold text-zinc-950 shadow-lg shadow-amber-500/20 active:scale-98 transition-all cursor-pointer disabled:opacity-70"
+					>
+						{#if isDownloadingQr}
+							<Loader2 class="h-4 w-4 animate-spin" />
+							<span>Menyiapkan QR Code...</span>
+						{:else}
+							<Download class="h-4 w-4" />
+							<span>Unduh QR Code (PNG)</span>
 						{/if}
 					</button>
 				</div>
