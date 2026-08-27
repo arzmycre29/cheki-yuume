@@ -708,10 +708,11 @@
 		try {
 			const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
 			if (res.success && res.frames.length > 0) {
-				const updated = customFramesStore.syncFromRemote(res.frames);
-				saveMessage = `Berhasil menyinkronkan ${res.count} frame dari Cloudinary! (${updated} frame diperbarui/ditambahkan)`;
+				customFramesStore.syncFromRemote(res.frames);
+				saveMessage = `Berhasil menyinkronkan ${res.count} frame kustom dari Cloudinary!`;
 			} else if (res.success) {
-				saveMessage = 'Sinkronisasi selesai: Tidak ada frame baru ditemukan di Cloudinary.';
+				customFramesStore.syncFromRemote([]);
+				saveMessage = 'Sinkronisasi selesai: Cloudinary tidak memiliki custom frame (kembali ke default).';
 			} else {
 				alert(res.error || 'Gagal menyinkronkan frame dari Cloudinary.');
 			}
@@ -880,11 +881,28 @@
 		}
 	}
 
-	function handleResetFrames() {
-		if (confirm('Kembalikan semua frame ke pengaturan bawaan standar?')) {
+	async function handleResetFrames() {
+		if (confirm('Kembalikan semua frame ke pengaturan bawaan standar? Tindakan ini juga akan membersihkan custom frame di Cloudinary.')) {
 			customFramesStore.resetToDefault();
 			saveMessage = 'Frame dikembalikan ke setelan pabrik!';
 			setTimeout(() => (saveMessage = ''), 3000);
+
+			if (
+				formSettings.cloudProvider === 'cloudinary' &&
+				formSettings.cloudinaryCloudName?.trim() &&
+				formSettings.cloudinaryUploadPreset?.trim()
+			) {
+				try {
+					await backupCustomFramesToCloudinary(
+						[],
+						formSettings.cloudinaryCloudName,
+						formSettings.cloudinaryUploadPreset
+					);
+					console.log('[Frames] Cloud frames manifest successfully cleared.');
+				} catch (e) {
+					console.warn('[Frames] Failed to clear cloud frames manifest:', e);
+				}
+			}
 		}
 	}
 

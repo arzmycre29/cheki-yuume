@@ -113,32 +113,14 @@ function createCustomFramesStore() {
 			});
 		},
 		syncFromRemote: (remoteFrames: FrameLayout[]): number => {
-			let updatedOrAddedCount = 0;
-			update((curr) => {
-				const frameMap = new Map<string, FrameLayout>();
-				// Keep standard default frames
-				ALL_FRAME_TEMPLATES.forEach((f) => frameMap.set(f.id, f));
-
-				// Load current local frames
-				curr.forEach((f) => frameMap.set(f.id, f));
-
-				// Add or update with remote frames
-				for (const rf of remoteFrames) {
-					const existing = frameMap.get(rf.id);
-					if (!existing) {
-						frameMap.set(rf.id, rf);
-						updatedOrAddedCount++;
-					} else if (JSON.stringify(existing) !== JSON.stringify(rf)) {
-						frameMap.set(rf.id, rf);
-						updatedOrAddedCount++;
-					}
-				}
-
-				const next = Array.from(frameMap.values());
+			const remoteCustom = remoteFrames.filter((f) => f.id.startsWith('custom-'));
+			update(() => {
+				// Keep built-in templates and mirror remote custom frames exactly
+				const next = [...ALL_FRAME_TEMPLATES, ...remoteCustom];
 				persist(next);
 				return next;
 			});
-			return updatedOrAddedCount;
+			return remoteCustom.length;
 		},
 		resetToDefault: () => {
 			if (typeof window !== 'undefined') {

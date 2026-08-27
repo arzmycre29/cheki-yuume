@@ -397,13 +397,6 @@ export async function backupCustomFramesToCloudinary(
 ): Promise<{ success: boolean; url?: string; count: number; error?: string }> {
 	try {
 		const customOnly = frames.filter((f) => f.id.startsWith('custom-'));
-		if (customOnly.length === 0) {
-			return {
-				success: false,
-				count: 0,
-				error: 'Belum ada custom frame untuk dicadangkan.'
-			};
-		}
 
 		const manifestData = {
 			version: '1.0',
