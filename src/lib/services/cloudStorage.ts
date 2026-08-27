@@ -297,21 +297,25 @@ export async function uploadSessionToCloud(
 			}
 
 			// Automatically append session into central Cloudinary sessions_manifest.json
-			recordSessionToCloudinaryManifest(
-				{
-					sessionId: session.sessionId,
-					guestName: session.guestName,
-					mode: session.mode,
-					layoutId: session.layoutId,
-					photoUrl: photoUrl || undefined,
-					videoUrl: videoUrl || undefined,
-					shareUrl,
-					manifestUrl,
-					createdAt: session.createdAt || Date.now()
-				},
-				cloudName,
-				uploadPreset
-			).catch((e) => console.warn('[Cloudinary] Session manifest background sync warning:', e));
+			try {
+				await recordSessionToCloudinaryManifest(
+					{
+						sessionId: session.sessionId,
+						guestName: session.guestName,
+						mode: session.mode,
+						layoutId: session.layoutId,
+						photoUrl: photoUrl || undefined,
+						videoUrl: videoUrl || undefined,
+						shareUrl,
+						manifestUrl,
+						createdAt: session.createdAt || Date.now()
+					},
+					cloudName,
+					uploadPreset
+				);
+			} catch (e) {
+				console.warn('[Cloudinary] Session manifest sync warning:', e);
+			}
 
 			return {
 				photoUrl,
