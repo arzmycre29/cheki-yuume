@@ -119,14 +119,16 @@
 
 			try {
 				const latestSession = get(sessionStore);
+				console.log(`[ProcessingCloud] Starting cloud upload for session "${latestSession.sessionId}" (${latestSession.guestName || 'Tamu'})...`);
 				const uploadRes = await uploadSessionToCloud(latestSession, settings);
+				console.log('[ProcessingCloud] ✓ Cloud upload completed:', uploadRes);
 				sessionStore.setCloudUploadStatus('success', {
 					photo: uploadRes.photoUrl || undefined,
 					video: uploadRes.videoUrl || undefined,
 					share: uploadRes.shareUrl
 				});
 			} catch (cloudErr) {
-				console.warn('Cloud sync error (offline fallback mode active):', cloudErr);
+				console.error('[ProcessingCloud] ✗ Cloud upload error (offline fallback mode active):', cloudErr);
 			}
 
 			// Finish!

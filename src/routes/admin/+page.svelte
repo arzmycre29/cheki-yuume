@@ -134,15 +134,22 @@
 
 		// Auto-sync frames & sessions from Cloudinary on mount if configured
 		if (formSettings.cloudProvider === 'cloudinary' && formSettings.cloudinaryCloudName?.trim()) {
+			console.log(`[AdminMount] Auto-syncing from Cloudinary (cloud: "${formSettings.cloudinaryCloudName}")...`);
 			try {
 				const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
 				if (res.success && res.frames.length > 0) {
+					console.log(`[AdminMount] ✓ Synced ${res.frames.length} custom frames from Cloud.`);
 					customFramesStore.syncFromRemote(res.frames);
+				} else {
+					console.log('[AdminMount] Custom frames auto-sync result:', res);
 				}
-			} catch (_) {}
+			} catch (frameErr) {
+				console.warn('[AdminMount] Custom frames auto-sync error:', frameErr);
+			}
 
 			try {
 				const sessionRes = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName);
+				console.log('[AdminMount] retrieveSessionsFromCloudinary result:', sessionRes);
 				if (sessionRes.success && sessionRes.sessions.length > 0) {
 					const cur = await getAllSessionsFromDB();
 					const existingMap = new Map(cur.map((s) => [s.sessionId, s]));
@@ -180,9 +187,14 @@
 							changed = true;
 						}
 					}
-					if (changed) await loadSessions();
+					if (changed) {
+						console.log('[AdminMount] Database updated with remote cloud sessions. Refreshing list...');
+						await loadSessions();
+					}
 				}
-			} catch (_) {}
+			} catch (sessErr) {
+				console.warn('[AdminMount] Sessions auto-sync error:', sessErr);
+			}
 		}
 	});
 
@@ -518,6 +530,7 @@
 	}
 
 	async function handleSyncSessionsFromCloud() {
+		console.log(`[AdminSync] Manual sync triggered for cloud: "${formSettings.cloudinaryCloudName}"`);
 		if (
 			formSettings.cloudProvider !== 'cloudinary' ||
 			!formSettings.cloudinaryCloudName?.trim()
@@ -529,6 +542,7 @@
 		isSyncingSessions = true;
 		try {
 			const res = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName);
+			console.log('[AdminSync] retrieveSessionsFromCloudinary response:', res);
 			if (res.success && res.sessions.length > 0) {
 				const cur = await getAllSessionsFromDB();
 				const existingMap = new Map(cur.map((s) => [s.sessionId, s]));
@@ -584,13 +598,17 @@
 				}
 
 				await loadSessions();
+				console.log(`[AdminSync] ✓ Sync complete: ${addedCount} added, ${updatedCount} updated.`);
 				saveMessage = `Berhasil menyinkronkan riwayat! (${addedCount} sesi baru ditambahkan${updatedCount > 0 ? `, ${updatedCount} diperbarui` : ''} dari Cloudinary)`;
 			} else if (res.success) {
+				console.log('[AdminSync] Manifest retrieved successfully, but 0 sessions found.');
 				saveMessage = 'Sinkronisasi riwayat selesai: Semua sesi sudah up to date.';
 			} else {
-				alert(res.error || 'Gagal menyinkronkan riwayat dari Cloudinary.');
+				console.error('[AdminSync] ✗ Sync failed with error:', res.error);
+				alert(res.error || 'Gagal menyinkronkan riwayat dari Cloudinary. Periksa console F12 untuk detail URL yang diuji.');
 			}
 		} catch (err: any) {
+			console.error('[AdminSync] ✗ Exception during sync:', err);
 			alert(`Gagal mengambil riwayat dari Cloud: ${err?.message || err}`);
 		} finally {
 			isSyncingSessions = false;
@@ -599,6 +617,7 @@
 	}
 
 	async function handlePullSingleSession() {
+		console.log(`[AdminPull] Pulling single session query "${singlePullQuery}" (guest hint: "${singlePullGuestName}")...`);
 		if (
 			formSettings.cloudProvider !== 'cloudinary' ||
 			!formSettings.cloudinaryCloudName?.trim()
@@ -619,6 +638,7 @@
 				formSettings.cloudinaryCloudName,
 				singlePullGuestName
 			);
+			console.log('[AdminPull] retrieveSessionBySessionId response:', res);
 
 			if (res.success && res.session) {
 				const cs = res.session;
@@ -631,6 +651,7 @@
 					if (!existing.photostripDataUrl && cs.photoUrl) existing.photostripDataUrl = cs.photoUrl;
 					if (!existing.videostripUrl && cs.videoUrl) existing.videostripUrl = cs.videoUrl;
 					await saveSessionToDB(existing);
+					console.log('[AdminPull] ✓ Updated existing session in DB:', cs.sessionId);
 				} else {
 					await saveSessionToDB({
 						sessionId: cs.sessionId,
@@ -652,6 +673,7 @@
 						cloudShareUrl: cs.shareUrl || null,
 						isOfflineSaved: true
 					});
+					console.log('[AdminPull] ✓ Saved new session to DB:', cs.sessionId);
 				}
 
 				await loadSessions();
@@ -660,9 +682,11 @@
 				singlePullQuery = '';
 				singlePullGuestName = '';
 			} else {
+				console.error('[AdminPull] ✗ Pull single session failed:', res.error);
 				alert(res.error || 'Gagal menarik sesi dari Cloudinary.');
 			}
 		} catch (err: any) {
+			console.error('[AdminPull] ✗ Exception in handlePullSingleSession:', err);
 			alert(`Gagal menarik sesi: ${err?.message || err}`);
 		} finally {
 			isPullingSingleSession = false;
