@@ -906,6 +906,191 @@
 		}
 	}
 
+	// Batch Frame Upload State & Functions
+	interface BatchFrameFileItem {
+		id: string;
+		file: File;
+		previewUrl: string;
+		name: string;
+		slots: number;
+		backgroundColor: string;
+		status: 'idle' | 'uploading' | 'success' | 'error';
+		errorMsg?: string;
+	}
+	let isBatchFrameModalOpen = $state(false);
+	let batchFrameItems = $state<BatchFrameFileItem[]>([]);
+	let isUploadingBatch = $state(false);
+	let batchUploadProgress = $state('');
+	let batchDefaultBgColor = $state('#FFFFFF');
+
+	function openBatchFrameModal() {
+		batchFrameItems = [];
+		batchUploadProgress = '';
+		isBatchFrameModalOpen = true;
+	}
+
+	function detectSlotsFromImageAndName(name: string, naturalWidth?: number, naturalHeight?: number): number {
+		if (naturalWidth && naturalHeight && naturalWidth > 0) {
+			const ratio = naturalHeight / naturalWidth;
+			if (ratio < 1.4) return 1;
+			if (ratio < 2.1) return 2;
+			if (ratio < 2.8) return 3;
+			return 4;
+		}
+
+		const lower = name.toLowerCase();
+		if (/\b1s\b|1_slot|1slot|1-slot|_1s\./i.test(lower)) return 1;
+		if (/\b2s\b|2_slot|2slot|2-slot|_2s\./i.test(lower)) return 2;
+		if (/\b3s\b|3_slot|3slot|3-slot|_3s\./i.test(lower)) return 3;
+		if (/\b4s\b|4_slot|4slot|4-slot|_4s\./i.test(lower)) return 4;
+		return 4;
+	}
+
+	function handleBatchFilesSelect(e: Event) {
+		const target = e.target as HTMLInputElement;
+		if (!target.files || target.files.length === 0) return;
+
+		const files = Array.from(target.files);
+		for (const file of files) {
+			const previewUrl = URL.createObjectURL(file);
+			const cleanName = file.name
+				.replace(/\.[^/.]+$/, '')
+				.replace(/[_-]+/g, ' ')
+				.trim();
+
+			const initialSlots = detectSlotsFromImageAndName(file.name);
+			const itemId = `batch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
+			const newItem: BatchFrameFileItem = {
+				id: itemId,
+				file,
+				previewUrl,
+				name: cleanName,
+				slots: initialSlots,
+				backgroundColor: batchDefaultBgColor,
+				status: 'idle'
+			};
+
+			batchFrameItems = [...batchFrameItems, newItem];
+
+			const img = new Image();
+			img.onload = () => {
+				const detectedSlots = detectSlotsFromImageAndName(file.name, img.naturalWidth, img.naturalHeight);
+				batchFrameItems = batchFrameItems.map((item) =>
+					item.id === itemId ? { ...item, slots: detectedSlots } : item
+				);
+			};
+			img.src = previewUrl;
+		}
+
+		target.value = '';
+	}
+
+	function removeBatchItem(id: string) {
+		const item = batchFrameItems.find((i) => i.id === id);
+		if (item && item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+		batchFrameItems = batchFrameItems.filter((i) => i.id !== id);
+	}
+
+	function applySlotsToAllBatch(slots: number) {
+		batchFrameItems = batchFrameItems.map((item) => ({ ...item, slots }));
+	}
+
+	function applyBgColorToAllBatch(color: string) {
+		batchDefaultBgColor = color;
+		batchFrameItems = batchFrameItems.map((item) => ({ ...item, backgroundColor: color }));
+	}
+
+	async function handleExecuteBatchUpload() {
+		if (batchFrameItems.length === 0) {
+			alert('Pilih setidaknya satu file gambar frame untuk diunggah.');
+			return;
+		}
+
+		const isCloudConfigured = Boolean(
+			formSettings.cloudProvider === 'cloudinary' &&
+			formSettings.cloudinaryCloudName?.trim() &&
+			formSettings.cloudinaryUploadPreset?.trim()
+		);
+
+		isUploadingBatch = true;
+		const total = batchFrameItems.length;
+		const framesToAdd: Array<{
+			name: string;
+			description?: string;
+			mode: any;
+			totalSlots: number;
+			backgroundColor: string;
+			overlayUrl?: string;
+		}> = [];
+
+		for (let i = 0; i < total; i++) {
+			const item = batchFrameItems[i];
+			batchUploadProgress = `Mengunggah ${i + 1}/${total}: "${item.name}"...`;
+			item.status = 'uploading';
+
+			let overlayUrl: string | undefined = undefined;
+
+			if (isCloudConfigured) {
+				try {
+					overlayUrl = await uploadCustomFrameOverlayToCloudinary(
+						item.file,
+						item.name,
+						formSettings.cloudinaryCloudName.trim(),
+						formSettings.cloudinaryUploadPreset.trim()
+					);
+					item.status = 'success';
+				} catch (err: any) {
+					console.warn(`[BatchFrames] Cloud upload failed for "${item.name}", fallback to local dataURL:`, err);
+					item.status = 'error';
+					item.errorMsg = err?.message || String(err);
+				}
+			}
+
+			if (!overlayUrl) {
+				overlayUrl = await new Promise<string>((resolve) => {
+					const reader = new FileReader();
+					reader.onload = (e) => resolve((e.target?.result as string) || '');
+					reader.readAsDataURL(item.file);
+				});
+				if (item.status !== 'error') item.status = 'success';
+			}
+
+			framesToAdd.push({
+				name: item.name,
+				description: `Batch uploaded frame (${item.slots} Slot)`,
+				mode: 'default',
+				totalSlots: item.slots,
+				backgroundColor: item.backgroundColor || '#FFFFFF',
+				overlayUrl
+			});
+		}
+
+		customFramesStore.addMultipleFrames(framesToAdd);
+
+		if (isCloudConfigured) {
+			batchUploadProgress = 'Menyinkronkan manifest frame ke Cloudinary...';
+			try {
+				await backupCustomFramesToCloudinary(
+					get(customFramesStore),
+					formSettings.cloudinaryCloudName.trim(),
+					formSettings.cloudinaryUploadPreset.trim()
+				);
+				console.log('[BatchFrames] ✓ Manifest frame successfully updated in Cloudinary!');
+			} catch (mErr) {
+				console.warn('[BatchFrames] Manifest sync warning:', mErr);
+			}
+		}
+
+		isUploadingBatch = false;
+		batchUploadProgress = '';
+		isBatchFrameModalOpen = false;
+		batchFrameItems = [];
+
+		saveMessage = `Berhasil menambahkan ${framesToAdd.length} frame baru${isCloudConfigured ? ' & tersinkron ke Cloud' : ''}!`;
+		setTimeout(() => (saveMessage = ''), 4000);
+	}
+
 	async function handleExportZip(session: SessionData) {
 		try {
 			const blob = await createSessionExportZip(session);
@@ -1379,6 +1564,16 @@
 							class="rounded-xl bg-zinc-800 hover:bg-zinc-700 px-3.5 py-2 text-xs font-bold text-zinc-300 border border-zinc-700 transition-all cursor-pointer"
 						>
 							Reset ke Default
+						</button>
+
+						<button
+							type="button"
+							onclick={openBatchFrameModal}
+							class="flex items-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/20 transition-all cursor-pointer"
+							title="Unggah beberapa file PNG frame sekaligus"
+						>
+							<Layers class="h-4 w-4" />
+							<span>Batch Upload Frame</span>
 						</button>
 
 						<button
@@ -2375,6 +2570,192 @@
 						<Save class="h-4 w-4" />
 						<span>Simpan Frame</span>
 					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Modal: Batch Upload Custom Frames -->
+	{#if isBatchFrameModalOpen}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-200">
+			<div class="w-full max-w-2xl rounded-3xl bg-zinc-900 border border-zinc-800 p-6 sm:p-8 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+				<!-- Header -->
+				<div class="flex items-center justify-between pb-4 border-b border-zinc-800 shrink-0">
+					<div class="flex items-center gap-3">
+						<div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-500/20 to-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+							<Layers class="h-5 w-5" />
+						</div>
+						<div>
+							<h3 class="text-lg font-bold text-white font-display">Batch Upload Custom Frames</h3>
+							<p class="text-xs text-zinc-400">Pilih beberapa file overlay PNG sekaligus untuk diunggah & dibuatkan template</p>
+						</div>
+					</div>
+					<button
+						type="button"
+						disabled={isUploadingBatch}
+						onclick={() => (isBatchFrameModalOpen = false)}
+						class="flex h-9 w-9 items-center justify-center rounded-xl bg-zinc-800 text-zinc-400 hover:text-white cursor-pointer disabled:opacity-50"
+					>
+						<X class="h-4 w-4" />
+					</button>
+				</div>
+
+				<!-- Modal Body -->
+				<div class="flex flex-col gap-4 py-5 overflow-y-auto flex-1">
+					{#if batchFrameItems.length === 0}
+						<!-- Dropzone when empty -->
+						<label
+							class="flex flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-zinc-700 hover:border-indigo-500/60 bg-zinc-800/40 hover:bg-zinc-800/70 p-10 cursor-pointer transition-all text-center group"
+						>
+							<div class="flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-400 group-hover:scale-110 transition-transform">
+								<Upload class="h-8 w-8" />
+							</div>
+							<div>
+								<p class="text-sm font-bold text-white mb-1">Klik atau Tarik File PNG ke Sini</p>
+								<p class="text-xs text-zinc-400 max-w-sm">
+									Pilih beberapa file frame overlay sekaligus (misal: 6 atau 9 file PNG). Format PNG transparan disarankan.
+								</p>
+							</div>
+							<div class="rounded-xl bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-300 font-mono">
+								💡 Jumlah slot (1, 2, 3, atau 4) otomatis dideteksi dari rasio gambar & nama file!
+							</div>
+							<input
+								type="file"
+								multiple
+								accept="image/png,image/webp"
+								onchange={handleBatchFilesSelect}
+								class="hidden"
+							/>
+						</label>
+					{:else}
+						<!-- Batch Toolbar -->
+						<div class="flex flex-wrap items-center justify-between gap-3 bg-zinc-800/60 p-3 rounded-2xl border border-zinc-700/60">
+							<div class="flex items-center gap-2">
+								<span class="text-xs font-bold text-white">{batchFrameItems.length} File Dipilih</span>
+								<label class="cursor-pointer rounded-xl bg-zinc-700 hover:bg-zinc-600 px-2.5 py-1 text-[11px] font-bold text-zinc-200 transition-colors">
+									<span>+ Tambah File</span>
+									<input
+										type="file"
+										multiple
+										accept="image/png,image/webp"
+										onchange={handleBatchFilesSelect}
+										class="hidden"
+									/>
+								</label>
+							</div>
+
+							<!-- Quick Slot Setter -->
+							<div class="flex items-center gap-1.5 text-xs text-zinc-400">
+								<span class="text-[11px]">Set semua slot:</span>
+								{#each [1, 2, 3, 4] as s}
+									<button
+										type="button"
+										onclick={() => applySlotsToAllBatch(s)}
+										class="px-2 py-0.5 rounded-lg bg-zinc-700 hover:bg-indigo-600 text-zinc-200 hover:text-white text-[11px] font-bold transition-colors cursor-pointer"
+									>
+										{s}s
+									</button>
+								{/each}
+							</div>
+						</div>
+
+						<!-- Items List -->
+						<div class="flex flex-col gap-2.5 max-h-96 overflow-y-auto pr-1">
+							{#each batchFrameItems as item, idx (item.id)}
+								<div class="flex items-center gap-3 bg-zinc-800/40 border border-zinc-700/60 hover:border-zinc-600 rounded-2xl p-2.5 transition-colors">
+									<!-- Thumbnail -->
+									<div class="h-14 w-12 rounded-xl bg-zinc-900 border border-zinc-700 flex items-center justify-center overflow-hidden shrink-0">
+										<img src={item.previewUrl} alt={item.name} class="h-full w-full object-contain p-0.5" />
+									</div>
+
+									<!-- Info & Name input -->
+									<div class="flex-1 min-w-0">
+										<input
+											type="text"
+											bind:value={item.name}
+											disabled={isUploadingBatch}
+											placeholder="Nama Frame"
+											class="w-full rounded-xl bg-zinc-900 border border-zinc-700 py-1.5 px-3 text-xs text-white focus:border-indigo-500 focus:outline-hidden font-bold"
+										/>
+										<span class="text-[10px] text-zinc-500 truncate block mt-0.5">{item.file.name}</span>
+									</div>
+
+									<!-- Slot selector pills -->
+									<div class="flex items-center gap-1 shrink-0">
+										{#each [1, 2, 3, 4] as s}
+											<button
+												type="button"
+												disabled={isUploadingBatch}
+												onclick={() => (item.slots = s)}
+												class="px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer {item.slots === s ? 'bg-indigo-600 text-white shadow-xs' : 'bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700'}"
+											>
+												{s}s
+											</button>
+										{/each}
+									</div>
+
+									<!-- Delete button -->
+									<button
+										type="button"
+										disabled={isUploadingBatch}
+										onclick={() => removeBatchItem(item.id)}
+										class="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-colors cursor-pointer shrink-0 disabled:opacity-30"
+										title="Hapus dari antrean"
+									>
+										<Trash2 class="h-4 w-4" />
+									</button>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					<!-- Upload Progress Bar -->
+					{#if isUploadingBatch}
+						<div class="flex flex-col gap-2 bg-indigo-950/40 border border-indigo-500/30 p-4 rounded-2xl animate-in fade-in duration-150">
+							<div class="flex items-center justify-between text-xs">
+								<span class="font-bold text-indigo-300 flex items-center gap-2">
+									<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+									<span>{batchUploadProgress || 'Memproses upload batch...'}</span>
+								</span>
+							</div>
+							<div class="h-2 w-full rounded-full bg-zinc-800 overflow-hidden">
+								<div class="h-full bg-gradient-to-r from-purple-500 to-indigo-500 animate-pulse w-full"></div>
+							</div>
+						</div>
+					{/if}
+				</div>
+
+				<!-- Footer -->
+				<div class="pt-4 border-t border-zinc-800 flex items-center justify-between gap-3 shrink-0">
+					<span class="text-[11px] text-zinc-500">
+						{#if batchFrameItems.length > 0}
+							Semua frame akan otomatis tersinkron ke Cloudinary
+						{/if}
+					</span>
+					<div class="flex items-center gap-2">
+						<button
+							type="button"
+							disabled={isUploadingBatch}
+							onclick={() => (isBatchFrameModalOpen = false)}
+							class="rounded-xl bg-zinc-800 hover:bg-zinc-700 px-4 py-2 text-xs font-bold text-zinc-300 cursor-pointer disabled:opacity-50"
+						>
+							Batal
+						</button>
+						<button
+							type="button"
+							disabled={isUploadingBatch || batchFrameItems.length === 0}
+							onclick={handleExecuteBatchUpload}
+							class="flex items-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/20 cursor-pointer disabled:opacity-40"
+						>
+							{#if isUploadingBatch}
+								<RefreshCw class="h-4 w-4 animate-spin" />
+								<span>Mengunggah...</span>
+							{:else}
+								<Upload class="h-4 w-4" />
+								<span>Unggah {batchFrameItems.length} Frame ke Cloud</span>
+							{/if}
+						</button>
+					</div>
 				</div>
 			</div>
 		</div>

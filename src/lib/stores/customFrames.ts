@@ -105,6 +105,47 @@ function createCustomFramesStore() {
 
 			return newFrame;
 		},
+		addMultipleFrames: (framesData: Array<{
+			name: string;
+			description?: string;
+			mode: CaptureMode;
+			totalSlots: number;
+			backgroundColor: string;
+			overlayUrl?: string;
+			backgroundUrl?: string;
+		}>) => {
+			const newFrames: FrameLayout[] = framesData.map((frameData, idx) => {
+				const id = `custom-${Date.now() + idx}-${Math.random().toString(36).substring(2, 6)}`;
+				const canvasHeight = calculateCanvasHeight(frameData.totalSlots);
+				return {
+					id,
+					name: frameData.name.trim() || `Custom Frame (${frameData.totalSlots} Slot)`,
+					description: frameData.description?.trim() || `Custom uploaded frame dengan ${frameData.totalSlots} slot`,
+					mode: frameData.mode,
+					totalSlots: frameData.totalSlots,
+					canvasWidth: CANVAS_WIDTH,
+					canvasHeight,
+					slotWidth: SLOT_WIDTH,
+					slotHeight: SLOT_HEIGHT,
+					margin: MARGIN,
+					slots: createVerticalSlots(frameData.totalSlots),
+					backgroundColor: frameData.backgroundColor || '#FFFFFF',
+					overlayUrl: frameData.overlayUrl,
+					backgroundUrl: frameData.backgroundUrl,
+					footerHeight: 270,
+					aspectRatioLabel: `${frameData.totalSlots} Slot Strip`,
+					recommendedPaper: '4R'
+				};
+			});
+
+			update((curr) => {
+				const next = [...newFrames, ...curr];
+				persist(next);
+				return next;
+			});
+
+			return newFrames;
+		},
 		deleteFrame: (frameId: string) => {
 			update((curr) => {
 				const next = curr.filter((f) => f.id !== frameId);
