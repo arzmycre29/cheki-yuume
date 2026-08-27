@@ -70,6 +70,8 @@ export interface SessionData {
 	isOfflineSaved: boolean;
 }
 
+export type CloudProvider = 'cloudinary' | 'r2' | 's3' | 'supabase' | 'none';
+
 export interface KioskSettings {
 	cameraSource?: 'internal' | 'uvc';
 	cameraDeviceId: string;
@@ -82,7 +84,7 @@ export interface KioskSettings {
 	kioskTitle: string;
 	kioskSubtitle: string;
 	eventLogoUrl?: string;
-	cloudProvider: 'cloudinary' | 'r2' | 's3' | 'supabase' | 'none';
+	cloudProvider: CloudProvider;
 	cloudinaryCloudName?: string;
 	cloudinaryUploadPreset?: string;
 	cloudPublicBaseUrl: string;

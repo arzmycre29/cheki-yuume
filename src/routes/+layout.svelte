@@ -3,8 +3,9 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { settingsStore } from '$lib/stores/settings';
+	import { networkStore, initNetworkMonitor } from '$lib/services/networkStatus';
 	import { isFullscreen, toggleFullscreen, onFullscreenChange } from '$lib/utils/fullscreen';
-	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2 } from '@lucide/svelte';
+	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2, WifiOff, CheckCircle2 } from '@lucide/svelte';
 
 	let { children } = $props();
 
@@ -17,9 +18,23 @@
 
 	onMount(() => {
 		isFullscreenActive = isFullscreen();
-		return onFullscreenChange((active) => {
+		const unbindFullscreen = onFullscreenChange((active) => {
 			isFullscreenActive = active;
 		});
+
+		// Initialize service worker for complete offline caching
+		if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+			navigator.serviceWorker.register('/service-worker.js').catch((err) => {
+				console.warn('[SW] Registration failed:', err);
+			});
+		}
+
+		// Initialize real-time network detection & auto-switching
+		initNetworkMonitor();
+
+		return () => {
+			unbindFullscreen();
+		};
 	});
 
 	function handleSecretTap() {
@@ -86,6 +101,20 @@
 		title="Admin"
 		aria-label="Admin Trigger"
 	></button>
+
+	<!-- Real-Time Network Status Indicator Banners -->
+	{#if !$networkStore.isOnline}
+		<div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-amber-500/95 text-zinc-950 px-4 py-1.5 rounded-full text-xs font-black shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-none select-none border border-amber-400">
+			<span class="flex h-2 w-2 rounded-full bg-red-600 animate-ping"></span>
+			<WifiOff class="h-3.5 w-3.5" />
+			<span>Mode Offline Aktif (Sesi Disimpan ke Database Lokal)</span>
+		</div>
+	{:else if $networkStore.reconnectedNotification}
+		<div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-emerald-500/95 text-white px-4 py-1.5 rounded-full text-xs font-black shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-none select-none border border-emerald-400">
+			<CheckCircle2 class="h-3.5 w-3.5" />
+			<span>Koneksi Internet Pulih — Otomatis Beralih ke Cloud</span>
+		</div>
+	{/if}
 
 	<!-- Main App Content -->
 	<div class="flex-1 flex flex-col h-full w-full overflow-hidden">

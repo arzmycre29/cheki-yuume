@@ -51,6 +51,10 @@ function loadInitialFrames(): FrameLayout[] {
 	return ALL_FRAME_TEMPLATES;
 }
 
+function normalizeName(name: string): string {
+	return (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function createCustomFramesStore() {
 	const { subscribe, set, update } = writable<FrameLayout[]>(loadInitialFrames());
 
@@ -75,35 +79,65 @@ function createCustomFramesStore() {
 			overlayUrl?: string;
 			backgroundUrl?: string;
 		}) => {
-			const id = `custom-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+			const cleanName = frameData.name.trim() || `Custom Frame (${frameData.totalSlots} Slot)`;
+			const normName = normalizeName(cleanName);
 			const canvasHeight = calculateCanvasHeight(frameData.totalSlots);
-			const newFrame: FrameLayout = {
-				id,
-				name: frameData.name.trim() || `Custom Frame (${frameData.totalSlots} Slot)`,
-				description: frameData.description?.trim() || `Custom uploaded frame dengan ${frameData.totalSlots} slot`,
-				mode: frameData.mode,
-				totalSlots: frameData.totalSlots,
-				canvasWidth: CANVAS_WIDTH,
-				canvasHeight,
-				slotWidth: SLOT_WIDTH,
-				slotHeight: SLOT_HEIGHT,
-				margin: MARGIN,
-				slots: createVerticalSlots(frameData.totalSlots),
-				backgroundColor: frameData.backgroundColor || '#FFFFFF',
-				overlayUrl: frameData.overlayUrl,
-				backgroundUrl: frameData.backgroundUrl,
-				footerHeight: 270,
-				aspectRatioLabel: `${frameData.totalSlots} Slot Strip`,
-				recommendedPaper: '4R'
-			};
+
+			let savedFrame: FrameLayout;
 
 			update((curr) => {
-				const next = [newFrame, ...curr];
-				persist(next);
-				return next;
+				const existingIndex = curr.findIndex(
+					(f) => f.id.startsWith('custom-') && normalizeName(f.name) === normName
+				);
+
+				if (existingIndex !== -1) {
+					// Anti-Duplication: Update existing frame in place
+					const existing = curr[existingIndex];
+					savedFrame = {
+						...existing,
+						name: cleanName,
+						description: frameData.description?.trim() || existing.description,
+						mode: frameData.mode,
+						totalSlots: frameData.totalSlots,
+						canvasHeight,
+						slots: createVerticalSlots(frameData.totalSlots),
+						backgroundColor: frameData.backgroundColor || existing.backgroundColor,
+						overlayUrl: frameData.overlayUrl ?? existing.overlayUrl,
+						backgroundUrl: frameData.backgroundUrl ?? existing.backgroundUrl,
+						aspectRatioLabel: `${frameData.totalSlots} Slot Strip`
+					};
+					const next = [...curr];
+					next[existingIndex] = savedFrame;
+					persist(next);
+					return next;
+				} else {
+					const id = `custom-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+					savedFrame = {
+						id,
+						name: cleanName,
+						description: frameData.description?.trim() || `Custom uploaded frame dengan ${frameData.totalSlots} slot`,
+						mode: frameData.mode,
+						totalSlots: frameData.totalSlots,
+						canvasWidth: CANVAS_WIDTH,
+						canvasHeight,
+						slotWidth: SLOT_WIDTH,
+						slotHeight: SLOT_HEIGHT,
+						margin: MARGIN,
+						slots: createVerticalSlots(frameData.totalSlots),
+						backgroundColor: frameData.backgroundColor || '#FFFFFF',
+						overlayUrl: frameData.overlayUrl,
+						backgroundUrl: frameData.backgroundUrl,
+						footerHeight: 270,
+						aspectRatioLabel: `${frameData.totalSlots} Slot Strip`,
+						recommendedPaper: '4R'
+					};
+					const next = [savedFrame, ...curr];
+					persist(next);
+					return next;
+				}
 			});
 
-			return newFrame;
+			return savedFrame!;
 		},
 		addMultipleFrames: (framesData: Array<{
 			name: string;
@@ -114,37 +148,71 @@ function createCustomFramesStore() {
 			overlayUrl?: string;
 			backgroundUrl?: string;
 		}>) => {
-			const newFrames: FrameLayout[] = framesData.map((frameData, idx) => {
-				const id = `custom-${Date.now() + idx}-${Math.random().toString(36).substring(2, 6)}`;
-				const canvasHeight = calculateCanvasHeight(frameData.totalSlots);
-				return {
-					id,
-					name: frameData.name.trim() || `Custom Frame (${frameData.totalSlots} Slot)`,
-					description: frameData.description?.trim() || `Custom uploaded frame dengan ${frameData.totalSlots} slot`,
-					mode: frameData.mode,
-					totalSlots: frameData.totalSlots,
-					canvasWidth: CANVAS_WIDTH,
-					canvasHeight,
-					slotWidth: SLOT_WIDTH,
-					slotHeight: SLOT_HEIGHT,
-					margin: MARGIN,
-					slots: createVerticalSlots(frameData.totalSlots),
-					backgroundColor: frameData.backgroundColor || '#FFFFFF',
-					overlayUrl: frameData.overlayUrl,
-					backgroundUrl: frameData.backgroundUrl,
-					footerHeight: 270,
-					aspectRatioLabel: `${frameData.totalSlots} Slot Strip`,
-					recommendedPaper: '4R'
-				};
-			});
+			const processedFrames: FrameLayout[] = [];
 
 			update((curr) => {
-				const next = [...newFrames, ...curr];
+				let next = [...curr];
+
+				for (let i = 0; i < framesData.length; i++) {
+					const frameData = framesData[i];
+					const cleanName = frameData.name.trim() || `Custom Frame (${frameData.totalSlots} Slot)`;
+					const normName = normalizeName(cleanName);
+					const canvasHeight = calculateCanvasHeight(frameData.totalSlots);
+
+					const existingIndex = next.findIndex(
+						(f) => f.id.startsWith('custom-') && normalizeName(f.name) === normName
+					);
+
+					if (existingIndex !== -1) {
+						// Anti-Duplication: Update existing frame
+						const existing = next[existingIndex];
+						const updatedFrame: FrameLayout = {
+							...existing,
+							name: cleanName,
+							description: frameData.description?.trim() || existing.description,
+							mode: frameData.mode,
+							totalSlots: frameData.totalSlots,
+							canvasHeight,
+							slots: createVerticalSlots(frameData.totalSlots),
+							backgroundColor: frameData.backgroundColor || existing.backgroundColor,
+							overlayUrl: frameData.overlayUrl ?? existing.overlayUrl,
+							backgroundUrl: frameData.backgroundUrl ?? existing.backgroundUrl,
+							aspectRatioLabel: `${frameData.totalSlots} Slot Strip`
+						};
+						next[existingIndex] = updatedFrame;
+						processedFrames.push(updatedFrame);
+					} else {
+						// Insert new frame
+						const id = `custom-${Date.now() + i}-${Math.random().toString(36).substring(2, 6)}`;
+						const newFrame: FrameLayout = {
+							id,
+							name: cleanName,
+							description: frameData.description?.trim() || `Custom uploaded frame dengan ${frameData.totalSlots} slot`,
+							mode: frameData.mode,
+							totalSlots: frameData.totalSlots,
+							canvasWidth: CANVAS_WIDTH,
+							canvasHeight,
+							slotWidth: SLOT_WIDTH,
+							slotHeight: SLOT_HEIGHT,
+							margin: MARGIN,
+							slots: createVerticalSlots(frameData.totalSlots),
+							backgroundColor: frameData.backgroundColor || '#FFFFFF',
+							overlayUrl: frameData.overlayUrl,
+							backgroundUrl: frameData.backgroundUrl,
+							footerHeight: 270,
+							aspectRatioLabel: `${frameData.totalSlots} Slot Strip`,
+							recommendedPaper: '4R'
+						};
+						next = [newFrame, ...next];
+						processedFrames.push(newFrame);
+					}
+				}
+
 				persist(next);
 				return next;
 			});
 
-			return newFrames;
+			return processedFrames;
 		},
 		deleteFrame: (frameId: string) => {
 			update((curr) => {
@@ -155,13 +223,25 @@ function createCustomFramesStore() {
 		},
 		syncFromRemote: (remoteFrames: FrameLayout[]): number => {
 			const remoteCustom = remoteFrames.filter((f) => f.id.startsWith('custom-'));
+
+			// Anti-Duplication: Deduplicate remote custom frames by normalized name
+			const seenNames = new Set<string>();
+			const dedupedCustom: FrameLayout[] = [];
+			for (const f of remoteCustom) {
+				const norm = normalizeName(f.name);
+				if (!seenNames.has(norm)) {
+					seenNames.add(norm);
+					dedupedCustom.push(f);
+				}
+			}
+
 			update(() => {
-				// Keep built-in templates and mirror remote custom frames exactly
-				const next = [...ALL_FRAME_TEMPLATES, ...remoteCustom];
+				// Keep built-in templates and mirror remote custom frames cleanly
+				const next = [...ALL_FRAME_TEMPLATES, ...dedupedCustom];
 				persist(next);
 				return next;
 			});
-			return remoteCustom.length;
+			return dedupedCustom.length;
 		},
 		resetToDefault: () => {
 			if (typeof window !== 'undefined') {

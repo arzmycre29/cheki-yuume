@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { sessionStore } from '$lib/stores/session';
 	import { settingsStore } from '$lib/stores/settings';
+	import { networkStore } from '$lib/services/networkStatus';
 	import { customFramesStore } from '$lib/stores/customFrames';
 	import { cameraService, type VideoDeviceInfo } from '$lib/services/camera';
 	import { uvcCameraService, type UvcCaptureResult } from '$lib/services/uvcCamera';
@@ -1132,6 +1133,17 @@
 				<div class="flex items-center gap-2">
 					<Shield class="h-5 w-5 text-rose-400" />
 					<h1 class="text-xl font-black text-white font-display">Kiosk Admin Dashboard</h1>
+					{#if $networkStore.isOnline}
+						<span class="flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-0.5 text-[10px] font-bold text-emerald-400">
+							<span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+							<span>Online</span>
+						</span>
+					{:else}
+						<span class="flex items-center gap-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 text-[10px] font-bold text-amber-400">
+							<span class="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+							<span>Offline (Local Mode)</span>
+						</span>
+					{/if}
 				</div>
 				<p class="text-xs text-zinc-400">Pengaturan Kamera, Printer, Cloud & Manajemen Frame Kustom</p>
 			</div>
@@ -2183,6 +2195,18 @@
 				<p class="text-xs text-zinc-400">
 					Konfigurasi penyimpanan cloud untuk melayani QR Code download tamu. File akan tersimpan selama 30 hari secara otomatis.
 				</p>
+
+				{#if !$networkStore.isOnline}
+					<div class="flex items-start gap-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 text-xs text-amber-200">
+						<span class="flex h-2.5 w-2.5 rounded-full bg-amber-400 animate-ping mt-1 shrink-0"></span>
+						<div>
+							<p class="font-bold text-amber-300">Koneksi Internet Terputus (Mode Offline Aktif)</p>
+							<p class="text-amber-200/80 mt-1">
+								Penyimpanan sesi foto saat ini otomatis dialihkan ke database lokal (offline) agar bilik foto tetap dapat digunakan tanpa gangguan. Setelah internet pulih, sistem akan otomatis beralih kembali ke Cloudinary.
+							</p>
+						</div>
+					</div>
+				{/if}
 
 				<div>
 					<label for="cloud-provider-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Provider Cloud Storage</label>
