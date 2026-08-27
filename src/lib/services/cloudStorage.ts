@@ -525,8 +525,9 @@ export async function recordSessionToCloudinaryManifest(
 		if (typeof localStorage !== 'undefined') {
 			const cachedUrl = localStorage.getItem('cheki_last_sessions_manifest_url');
 			if (cachedUrl) {
-				const sep = cachedUrl.includes('?') ? '&' : '?';
-				candidateUrls.unshift(`${cachedUrl}${sep}_t=${Date.now()}`);
+				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
+				const sep = unversionedCached.includes('?') ? '&' : '?';
+				candidateUrls.push(`${unversionedCached}${sep}_t=${Date.now()}`);
 			}
 		}
 
@@ -876,8 +877,9 @@ export async function retrieveSessionsFromCloudinary(
 		if (typeof localStorage !== 'undefined') {
 			const cachedUrl = localStorage.getItem('cheki_last_sessions_manifest_url');
 			if (cachedUrl) {
-				const separator = cachedUrl.includes('?') ? '&' : '?';
-				candidateUrls.unshift(`${cachedUrl}${separator}_t=${Date.now()}`);
+				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
+				const separator = unversionedCached.includes('?') ? '&' : '?';
+				candidateUrls.push(`${unversionedCached}${separator}_t=${Date.now()}`);
 			}
 		}
 
