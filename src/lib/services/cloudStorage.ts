@@ -26,10 +26,13 @@ export interface CloudinaryUploadOptions {
 	tags?: string[];
 	context?: Record<string, string>;
 	overwrite?: boolean;
+	signed?: boolean;
 }
 
 /**
- * Uploads a single file to Cloudinary via Unsigned Upload Preset with explicit folder & filename
+ * Uploads a single file to Cloudinary.
+ * If overwrite or signed is requested, attempts a Signed Upload via Cloudflare Pages Function (/api/sign-cloudinary).
+ * Otherwise defaults to standard Unsigned Upload Preset.
  */
 export async function uploadToCloudinary(
 	file: Blob | File | string,
@@ -68,46 +71,82 @@ export async function uploadToCloudinary(
 		formData.append('file', file);
 	}
 
-	formData.append('upload_preset', uploadPreset);
-
-	// Dedicated Cloudinary Folder handling (both classic folder & dynamic asset_folder)
-	if (options.folder) {
-		const cleanFolder = options.folder.replace(/^\/+|\/+$/g, '');
-		formData.append('folder', cleanFolder);
-		formData.append('asset_folder', cleanFolder);
+	let cleanFolder = options.folder ? options.folder.replace(/^\/+|\/+$/g, '') : undefined;
+	let cleanPublicId = options.publicId;
+	if (cleanFolder && cleanPublicId && cleanPublicId.startsWith(cleanFolder)) {
+		cleanPublicId = cleanPublicId.slice(cleanFolder.length).replace(/^\/+/, '');
 	}
 
-	if (options.publicId) {
-		let cleanPublicId = options.publicId;
-		if (options.folder && cleanPublicId.startsWith(options.folder)) {
-			cleanPublicId = cleanPublicId.slice(options.folder.length).replace(/^\/+/, '');
+	let isSigned = false;
+
+	// When overwrite or signed is requested, attempt signed upload via Cloudflare Pages Function
+	if (options.overwrite || options.signed) {
+		try {
+			console.log(`[CloudUpload] Requesting signed upload signature for "${cleanPublicId || fileName}"...`);
+			const signRes = await fetch('/api/sign-cloudinary', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					folder: cleanFolder,
+					public_id: cleanPublicId,
+					overwrite: true,
+					tags: options.tags
+				})
+			});
+
+			if (signRes.ok) {
+				const signData = await signRes.json();
+				if (signData && signData.success && signData.signature) {
+					formData.append('api_key', signData.apiKey);
+					formData.append('timestamp', String(signData.timestamp));
+					formData.append('signature', signData.signature);
+					formData.append('overwrite', 'true');
+					if (cleanFolder) formData.append('folder', cleanFolder);
+					if (cleanPublicId) formData.append('public_id', cleanPublicId);
+					if (options.tags && options.tags.length > 0) formData.append('tags', options.tags.join(','));
+					isSigned = true;
+					console.log('[CloudUpload] ✓ Signed signature received from Cloudflare Pages Function (overwrite enabled)');
+				} else {
+					console.warn('[CloudUpload] /api/sign-cloudinary was not successful:', signData?.error);
+				}
+			} else {
+				console.warn(`[CloudUpload] /api/sign-cloudinary returned HTTP ${signRes.status}, falling back to unsigned preset.`);
+			}
+		} catch (signErr) {
+			console.warn('[CloudUpload] Could not reach /api/sign-cloudinary, falling back to unsigned preset:', signErr);
 		}
-		formData.append('public_id', cleanPublicId);
 	}
 
-	if (fileName) {
-		// For raw files, do not strip extension so Cloudinary preserves .json
-		if (resourceType === 'raw') {
-			formData.append('filename_override', fileName);
-		} else {
-			const nameOnly = fileName.replace(/\.[^/.]+$/, '');
-			formData.append('filename_override', nameOnly);
+	if (!isSigned) {
+		formData.append('upload_preset', uploadPreset);
+		if (cleanFolder) {
+			formData.append('folder', cleanFolder);
+			formData.append('asset_folder', cleanFolder);
 		}
-	}
-
-	if (options.tags && options.tags.length > 0) {
-		formData.append('tags', options.tags.join(','));
-	}
-
-	if (options.context) {
-		const ctxStr = Object.entries(options.context)
-			.map(([k, v]) => `${k}=${v}`)
-			.join('|');
-		formData.append('context', ctxStr);
+		if (cleanPublicId) {
+			formData.append('public_id', cleanPublicId);
+		}
+		if (fileName) {
+			if (resourceType === 'raw') {
+				formData.append('filename_override', fileName);
+			} else {
+				const nameOnly = fileName.replace(/\.[^/.]+$/, '');
+				formData.append('filename_override', nameOnly);
+			}
+		}
+		if (options.tags && options.tags.length > 0) {
+			formData.append('tags', options.tags.join(','));
+		}
+		if (options.context) {
+			const ctxStr = Object.entries(options.context)
+				.map(([k, v]) => `${k}=${v}`)
+				.join('|');
+			formData.append('context', ctxStr);
+		}
 	}
 
 	const endpoint = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
-	console.log(`[CloudUpload] Uploading ${resourceType} "${fileName || 'blob'}" to Cloudinary (cloud: ${cloudName}, preset: ${uploadPreset})...`);
+	console.log(`[CloudUpload] Uploading ${resourceType} "${fileName || 'blob'}" (${isSigned ? 'SIGNED' : 'UNSIGNED'}) to Cloudinary (${cloudName})...`);
 	const res = await fetch(endpoint, {
 		method: 'POST',
 		body: formData
@@ -377,6 +416,7 @@ export async function backupCustomFramesToCloudinary(
 			folder: 'chekiyuume',
 			publicId: 'frames_manifest.json',
 			fileName: 'frames_manifest.json',
+			overwrite: true,
 			tags: ['chekiyuume', 'frames_manifest', 'backup']
 		});
 
