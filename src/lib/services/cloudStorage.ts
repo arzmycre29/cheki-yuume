@@ -447,21 +447,47 @@ export async function retrieveCustomFramesFromCloudinary(
 			throw new Error('Cloudinary Cloud Name belum diisi.');
 		}
 
-		const manifestUrl = `https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest.json?_t=${Date.now()}`;
-		const res = await fetch(manifestUrl);
+		console.log(`[FramesRetrieve] Fetching custom frames manifest from Cloudinary: "${cleanCloud}"...`);
 
-		if (!res.ok) {
-			if (res.status === 404) {
-				throw new Error(
-					'Belum ada manifest frame di Cloudinary (chekiyuume/frames_manifest.json). Lakukan "Backup ke Cloud" terlebih dahulu.'
-				);
+		const candidateUrls: string[] = [
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest.json?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/frames_manifest.json?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest?_t=${Date.now()}`
+		];
+
+		let data: any = null;
+		let lastStatus = 0;
+
+		for (const url of candidateUrls) {
+			try {
+				console.log(`[FramesRetrieve] Checking URL: ${url}`);
+				const res = await fetch(url, {
+					cache: 'no-store',
+					headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
+				});
+				lastStatus = res.status;
+				console.log(`[FramesRetrieve] -> HTTP ${res.status}`);
+				if (res.ok) {
+					const json = await res.json();
+					if (json && Array.isArray(json.frames)) {
+						data = json;
+						console.log(`[FramesRetrieve] ✓ Frames manifest parsed successfully! Total frames: ${data.frames.length}`);
+						break;
+					}
+				}
+			} catch (fetchErr) {
+				console.warn(`[FramesRetrieve] Fetch error at ${url}:`, fetchErr);
 			}
-			throw new Error(`Gagal mengunduh manifest frame dari Cloudinary (HTTP ${res.status})`);
 		}
 
-		const data = await res.json();
-		if (!data || !Array.isArray(data.frames)) {
-			throw new Error('Format manifest frame di Cloudinary tidak valid.');
+		if (!data) {
+			console.warn(`[FramesRetrieve] Manifest frames belum ditemukan di Cloudinary (HTTP ${lastStatus || 404})`);
+			return {
+				success: false,
+				frames: [],
+				count: 0,
+				error: 'Belum ada manifest frame di Cloudinary (chekiyuume/frames_manifest.json). Lakukan "Backup ke Cloud" terlebih dahulu di tab Frame Designer.'
+			};
 		}
 
 		return {
@@ -470,7 +496,7 @@ export async function retrieveCustomFramesFromCloudinary(
 			count: data.frames.length
 		};
 	} catch (err: any) {
-		console.warn('[Frames] Retrieve from Cloudinary failed:', err);
+		console.warn('[FramesRetrieve] ✗ Retrieve frames from Cloudinary failed:', err);
 		return {
 			success: false,
 			frames: [],
