@@ -73,8 +73,9 @@ export async function onRequestPost(context) {
 		const paramsToSign = {};
 
 		if (body.folder) paramsToSign.folder = folder;
-		if (body.public_id) paramsToSign.public_id = String(body.public_id);
+		if (body.invalidate !== undefined || body.overwrite) paramsToSign.invalidate = 'true';
 		if (body.overwrite !== undefined) paramsToSign.overwrite = body.overwrite ? 'true' : 'false';
+		if (body.public_id) paramsToSign.public_id = String(body.public_id);
 		if (body.tags) {
 			paramsToSign.tags = Array.isArray(body.tags) ? body.tags.join(',') : String(body.tags);
 		}

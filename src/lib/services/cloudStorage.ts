@@ -90,6 +90,7 @@ export async function uploadToCloudinary(
 					folder: cleanFolder,
 					public_id: cleanPublicId,
 					overwrite: true,
+					invalidate: true,
 					tags: options.tags
 				})
 			});
@@ -101,11 +102,12 @@ export async function uploadToCloudinary(
 					formData.append('timestamp', String(signData.timestamp));
 					formData.append('signature', signData.signature);
 					formData.append('overwrite', 'true');
+					formData.append('invalidate', 'true');
 					if (cleanFolder) formData.append('folder', cleanFolder);
 					if (cleanPublicId) formData.append('public_id', cleanPublicId);
 					if (options.tags && options.tags.length > 0) formData.append('tags', options.tags.join(','));
 					isSigned = true;
-					console.log('[CloudUpload] ✓ Signed signature received from Cloudflare Pages Function (overwrite enabled)');
+					console.log('[CloudUpload] ✓ Signed signature received from Cloudflare Pages Function (overwrite & invalidate enabled)');
 				} else {
 					console.warn('[CloudUpload] /api/sign-cloudinary was not successful:', signData?.error);
 				}
@@ -447,6 +449,7 @@ export async function retrieveCustomFramesFromCloudinary(
 		console.log(`[FramesRetrieve] Fetching custom frames manifest from Cloudinary: "${cleanCloud}"...`);
 
 		const candidateUrls: string[] = [
+			`/api/manifest?type=frames&_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/frames_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest?_t=${Date.now()}`
@@ -928,6 +931,7 @@ export async function retrieveSessionsFromCloudinary(
 
 		// Try multiple URL variants to overcome Cloudinary raw naming discrepancies & versions
 		const candidateUrls: string[] = [
+			`/api/manifest?type=sessions&_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest?_t=${Date.now()}`,
