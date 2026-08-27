@@ -161,6 +161,7 @@
 					let changed = false;
 					for (const cs of sessionRes.sessions) {
 						const existing = existingMap.get(cs.sessionId);
+						const count = cs.photosCount || (cs.layoutId?.includes('1') ? 1 : cs.layoutId?.includes('2') ? 2 : 4);
 						if (!existing) {
 							await saveSessionToDB({
 								sessionId: cs.sessionId,
@@ -168,14 +169,21 @@
 								createdAt: cs.createdAt || Date.now(),
 								mode: (cs.mode as any) || 'default',
 								layoutId: cs.layoutId || 'default-4-classic',
-								photos: [],
+								photos: Array.from({ length: count }).map((_, idx) => ({
+									id: `cloud-${cs.sessionId}-${idx}`,
+									index: idx,
+									dataUrl: '',
+									blob: undefined,
+									timestamp: cs.createdAt || Date.now()
+								})),
+								photosCount: count,
 								assignedSlotPhotoIds: [],
 								stickers: [],
 								photostripDataUrl: cs.photoUrl || '',
 								photostripBlob: null,
 								videostripBlob: null,
 								videostripUrl: cs.videoUrl || null,
-								printCount: 0,
+								printCount: cs.printCount || 0,
 								cloudUploadStatus: 'success',
 								cloudPhotoUrl: cs.photoUrl || null,
 								cloudVideoUrl: cs.videoUrl || null,
@@ -183,13 +191,30 @@
 								isOfflineSaved: true
 							});
 							changed = true;
-						} else if (cs.photoUrl && !existing.photostripDataUrl && !existing.cloudPhotoUrl) {
-							existing.photostripDataUrl = cs.photoUrl;
-							existing.cloudPhotoUrl = cs.photoUrl;
-							if (cs.videoUrl && !existing.videostripUrl) existing.videostripUrl = cs.videoUrl;
-							if (cs.shareUrl && !existing.cloudShareUrl) existing.cloudShareUrl = cs.shareUrl;
-							await saveSessionToDB(existing);
-							changed = true;
+						} else {
+							let updated = false;
+							if (cs.photoUrl && !existing.photostripDataUrl && !existing.cloudPhotoUrl) {
+								existing.photostripDataUrl = cs.photoUrl;
+								existing.cloudPhotoUrl = cs.photoUrl;
+								if (cs.videoUrl && !existing.videostripUrl) existing.videostripUrl = cs.videoUrl;
+								if (cs.shareUrl && !existing.cloudShareUrl) existing.cloudShareUrl = cs.shareUrl;
+								updated = true;
+							}
+							if ((!existing.photos || existing.photos.length === 0) && (!existing.photosCount || existing.photosCount === 0)) {
+								existing.photosCount = count;
+								existing.photos = Array.from({ length: count }).map((_, idx) => ({
+									id: `cloud-${cs.sessionId}-${idx}`,
+									index: idx,
+									dataUrl: '',
+									blob: undefined,
+									timestamp: cs.createdAt || Date.now()
+								}));
+								updated = true;
+							}
+							if (updated) {
+								await saveSessionToDB(existing);
+								changed = true;
+							}
 						}
 					}
 					if (changed) {
@@ -211,7 +236,24 @@
 	});
 
 	async function loadSessions() {
-		sessions = await getAllSessionsFromDB();
+		const raw = await getAllSessionsFromDB();
+		for (const s of raw) {
+			if ((!s.photos || s.photos.length === 0) || !s.photosCount) {
+				const count = getSessionPhotoCount(s);
+				s.photosCount = count;
+				if (!s.photos || s.photos.length === 0) {
+					s.photos = Array.from({ length: count }).map((_, idx) => ({
+						id: `cloud-${s.sessionId}-${idx}`,
+						index: idx,
+						dataUrl: '',
+						blob: undefined,
+						timestamp: s.createdAt || Date.now()
+					}));
+				}
+				await saveSessionToDB(s);
+			}
+		}
+		sessions = raw;
 	}
 
 	async function refreshCameras() {
@@ -534,6 +576,22 @@
 		}
 	}
 
+	function getSessionPhotoCount(s: SessionData): number {
+		if (s.photos && s.photos.length > 0) return s.photos.length;
+		if (s.photosCount && s.photosCount > 0) return s.photosCount;
+		if (s.assignedSlotPhotoIds && s.assignedSlotPhotoIds.filter(Boolean).length > 0) {
+			return s.assignedSlotPhotoIds.filter(Boolean).length;
+		}
+		if (s.layoutId) {
+			const match = s.layoutId.match(/(\d+)/);
+			if (match) {
+				const count = parseInt(match[1], 10);
+				if (count >= 1 && count <= 8) return count;
+			}
+		}
+		return 4;
+	}
+
 	async function handleSyncSessionsFromCloud() {
 		console.log(`[AdminSync] Manual sync triggered for cloud: "${formSettings.cloudinaryCloudName}"`);
 		if (
@@ -556,6 +614,7 @@
 
 				for (const cs of res.sessions) {
 					const existing = existingMap.get(cs.sessionId);
+					const count = cs.photosCount || (cs.layoutId?.includes('1') ? 1 : cs.layoutId?.includes('2') ? 2 : 4);
 					if (!existing) {
 						await saveSessionToDB({
 							sessionId: cs.sessionId,
@@ -563,14 +622,21 @@
 							createdAt: cs.createdAt || Date.now(),
 							mode: (cs.mode as any) || 'default',
 							layoutId: cs.layoutId || 'default-4-classic',
-							photos: [],
+							photos: Array.from({ length: count }).map((_, idx) => ({
+								id: `cloud-${cs.sessionId}-${idx}`,
+								index: idx,
+								dataUrl: '',
+								blob: undefined,
+								timestamp: cs.createdAt || Date.now()
+							})),
+							photosCount: count,
 							assignedSlotPhotoIds: [],
 							stickers: [],
 							photostripDataUrl: cs.photoUrl || '',
 							photostripBlob: null,
 							videostripBlob: null,
 							videostripUrl: cs.videoUrl || null,
-							printCount: 0,
+							printCount: cs.printCount || 0,
 							cloudUploadStatus: 'success',
 							cloudPhotoUrl: cs.photoUrl || null,
 							cloudVideoUrl: cs.videoUrl || null,
@@ -593,6 +659,17 @@
 						}
 						if (cs.shareUrl && existing.cloudShareUrl !== cs.shareUrl) {
 							existing.cloudShareUrl = cs.shareUrl;
+							updated = true;
+						}
+						if ((!existing.photos || existing.photos.length === 0) && (!existing.photosCount || existing.photosCount === 0)) {
+							existing.photosCount = count;
+							existing.photos = Array.from({ length: count }).map((_, idx) => ({
+								id: `cloud-${cs.sessionId}-${idx}`,
+								index: idx,
+								dataUrl: '',
+								blob: undefined,
+								timestamp: cs.createdAt || Date.now()
+							}));
 							updated = true;
 						}
 						if (updated) {
@@ -648,6 +725,7 @@
 			if (res.success && res.session) {
 				const cs = res.session;
 				const existing = await getSessionFromDB(cs.sessionId);
+				const count = cs.photosCount || (cs.layoutId?.includes('1') ? 1 : cs.layoutId?.includes('2') ? 2 : 4);
 				if (existing) {
 					existing.cloudPhotoUrl = cs.photoUrl || existing.cloudPhotoUrl;
 					existing.cloudVideoUrl = cs.videoUrl || existing.cloudVideoUrl;
@@ -655,6 +733,16 @@
 					existing.cloudUploadStatus = 'success';
 					if (!existing.photostripDataUrl && cs.photoUrl) existing.photostripDataUrl = cs.photoUrl;
 					if (!existing.videostripUrl && cs.videoUrl) existing.videostripUrl = cs.videoUrl;
+					if ((!existing.photos || existing.photos.length === 0) && (!existing.photosCount || existing.photosCount === 0)) {
+						existing.photosCount = count;
+						existing.photos = Array.from({ length: count }).map((_, idx) => ({
+							id: `cloud-${cs.sessionId}-${idx}`,
+							index: idx,
+							dataUrl: '',
+							blob: undefined,
+							timestamp: cs.createdAt || Date.now()
+						}));
+					}
 					await saveSessionToDB(existing);
 					console.log('[AdminPull] ✓ Updated existing session in DB:', cs.sessionId);
 				} else {
@@ -664,14 +752,21 @@
 						createdAt: cs.createdAt || Date.now(),
 						mode: (cs.mode as any) || 'default',
 						layoutId: cs.layoutId || 'default-4-classic',
-						photos: [],
+						photos: Array.from({ length: count }).map((_, idx) => ({
+							id: `cloud-${cs.sessionId}-${idx}`,
+							index: idx,
+							dataUrl: '',
+							blob: undefined,
+							timestamp: cs.createdAt || Date.now()
+						})),
+						photosCount: count,
 						assignedSlotPhotoIds: [],
 						stickers: [],
 						photostripDataUrl: cs.photoUrl || '',
 						photostripBlob: null,
 						videostripBlob: null,
 						videostripUrl: cs.videoUrl || null,
-						printCount: 0,
+						printCount: cs.printCount || 0,
 						cloudUploadStatus: 'success',
 						cloudPhotoUrl: cs.photoUrl || null,
 						cloudVideoUrl: cs.videoUrl || null,
@@ -1464,7 +1559,9 @@
 											{/if}
 										</td>
 										<td class="py-3 px-4">
-											{s.photos.length} Foto
+											<span class="rounded-md bg-zinc-800/80 px-2 py-0.5 text-xs font-semibold text-zinc-300 border border-zinc-700/50">
+												{getSessionPhotoCount(s)} Foto
+											</span>
 										</td>
 										<td class="py-3 px-4">
 											{#if s.printCount > 0}

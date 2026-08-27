@@ -56,6 +56,7 @@ export interface SessionData {
 	mode: CaptureMode;
 	layoutId: string;
 	photos: PhotoItem[];
+	photosCount?: number;
 	assignedSlotPhotoIds: (string | null)[];
 	stickers?: StickerItem[];
 	photostripDataUrl: string | null;

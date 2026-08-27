@@ -274,6 +274,7 @@ export async function uploadSessionToCloud(
 					photoUrl: photoUrl || undefined,
 					videoUrl: videoUrl || undefined,
 					shareUrl,
+					photosCount: session.photos?.length || session.photosCount || 4,
 					printCount: session.printCount || 0
 				};
 				const sessionManifestBlob = new Blob([JSON.stringify(sessionManifestData, null, 2)], {
@@ -308,6 +309,8 @@ export async function uploadSessionToCloud(
 						videoUrl: videoUrl || undefined,
 						shareUrl,
 						manifestUrl,
+						photosCount: session.photos?.length || session.photosCount || 4,
+						printCount: session.printCount || 0,
 						createdAt: session.createdAt || Date.now()
 					},
 					cloudName,
@@ -568,6 +571,8 @@ export interface CloudSessionSummary {
 	videoUrl?: string;
 	shareUrl?: string;
 	manifestUrl?: string;
+	photosCount?: number;
+	printCount?: number;
 	createdAt: number;
 }
 
@@ -752,6 +757,8 @@ export async function backupAllSessionsToCloudinary(
 					videoUrl: videoUrl || undefined,
 					shareUrl,
 					manifestUrl: existingRemote?.manifestUrl,
+					photosCount: session.photos?.length || session.photosCount || existingRemote?.photosCount || 4,
+					printCount: session.printCount || existingRemote?.printCount || 0,
 					createdAt: session.createdAt || Date.now()
 				});
 				if (onProgress) onProgress(i + 1, sessions.length, `(Dilewati) ${guestLabel}`);
@@ -831,6 +838,7 @@ export async function backupAllSessionsToCloudinary(
 					photoUrl: photoUrl || undefined,
 					videoUrl: videoUrl || undefined,
 					shareUrl,
+					photosCount: session.photos?.length || session.photosCount || 4,
 					printCount: session.printCount || 0
 				};
 				const manifestBlob = new Blob([JSON.stringify(sessionManifestData, null, 2)], {
@@ -869,6 +877,8 @@ export async function backupAllSessionsToCloudinary(
 				videoUrl: videoUrl || undefined,
 				shareUrl,
 				manifestUrl: sessionManifestUrl,
+				photosCount: session.photos?.length || session.photosCount || 4,
+				printCount: session.printCount || 0,
 				createdAt: session.createdAt || Date.now()
 			});
 
@@ -1091,6 +1101,8 @@ export async function retrieveSessionBySessionId(
 									videoUrl: manifestData.videoUrl,
 									shareUrl: manifestData.shareUrl,
 									manifestUrl: mUrl,
+									photosCount: manifestData.photosCount || (Array.isArray(manifestData.photos) ? manifestData.photos.length : undefined),
+									printCount: manifestData.printCount || 0,
 									createdAt: manifestData.createdAt || Date.now()
 								}
 							};
@@ -1148,6 +1160,8 @@ export async function retrieveSessionFromManifestUrl(
 				videoUrl: data.videoUrl,
 				shareUrl: data.shareUrl,
 				manifestUrl: url,
+				photosCount: data.photosCount || (Array.isArray(data.photos) ? data.photos.length : undefined),
+				printCount: data.printCount || 0,
 				createdAt: data.createdAt || Date.now()
 			}
 		};
