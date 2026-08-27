@@ -138,7 +138,7 @@
 			console.log(`[AdminMount] Auto-syncing from Cloudinary (cloud: "${formSettings.cloudinaryCloudName}")...`);
 			try {
 				const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
-				if (res.success && res.frames.length > 0) {
+				if (res.success) {
 					console.log(`[AdminMount] ✓ Synced ${res.frames.length} custom frames from Cloud.`);
 					customFramesStore.syncFromRemote(res.frames);
 				} else {
