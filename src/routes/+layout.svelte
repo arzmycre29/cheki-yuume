@@ -5,7 +5,7 @@
 	import { settingsStore } from '$lib/stores/settings';
 	import { networkStore, initNetworkMonitor } from '$lib/services/networkStatus';
 	import { isFullscreen, toggleFullscreen, onFullscreenChange } from '$lib/utils/fullscreen';
-	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2, WifiOff, CheckCircle2 } from '@lucide/svelte';
+	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2, WifiOff, CheckCircle2, Eye, EyeOff } from '@lucide/svelte';
 
 	let { children } = $props();
 
@@ -14,6 +14,7 @@
 	let showPinModal = $state(false);
 	let pinInput = $state('');
 	let pinError = $state('');
+	let showPinReveal = $state(false);
 	let isFullscreenActive = $state(false);
 
 	onMount(() => {
@@ -31,6 +32,16 @@
 
 		// Initialize real-time network detection & auto-switching
 		initNetworkMonitor();
+
+		// Dynamically sync admin PIN from Cloudflare Pages environment if online
+		fetch('/api/config')
+			.then((res) => (res.ok ? res.json() : null))
+			.then((data) => {
+				if (data && data.adminPin) {
+					settingsStore.updateSettings({ adminPin: data.adminPin });
+				}
+			})
+			.catch(() => {});
 
 		return () => {
 			unbindFullscreen();
@@ -51,17 +62,38 @@
 		}
 	}
 
-	function handlePinSubmit() {
-		const correctPin = $settingsStore.adminPin || '1234';
-		if (pinInput === correctPin) {
+	async function handlePinSubmit() {
+		const correctPin = ($settingsStore.adminPin || '1234').trim();
+		const input = pinInput.trim();
+
+		if (input === correctPin) {
 			showPinModal = false;
 			pinInput = '';
 			pinError = '';
 			goto('/admin');
-		} else {
-			pinError = 'PIN salah. Coba lagi.';
-			pinInput = '';
+			return;
 		}
+
+		// Also check live against /api/config in case store hasn't synced yet
+		try {
+			const res = await fetch('/api/config');
+			if (res.ok) {
+				const data = await res.json();
+				if (data && data.adminPin && input === String(data.adminPin).trim()) {
+					settingsStore.updateSettings({ adminPin: data.adminPin });
+					showPinModal = false;
+					pinInput = '';
+					pinError = '';
+					goto('/admin');
+					return;
+				}
+			}
+		} catch (e) {
+			// offline fallback
+		}
+
+		pinError = 'PIN salah. Coba lagi.';
+		pinInput = '';
 	}
 
 	function handleKeyDown(e: KeyboardEvent) {
@@ -132,16 +164,31 @@
 				<h3 class="text-2xl font-black text-white font-display">Akses Admin Kiosk</h3>
 				<p class="text-xs text-zinc-400 mt-1">Masukkan PIN untuk membuka pengaturan booth</p>
 
-				<div class="mt-6">
-					<input
-						type="password"
-						bind:value={pinInput}
-						maxlength="6"
-						placeholder="••••"
-						class="w-full text-center tracking-[1em] text-3xl font-black rounded-2xl bg-zinc-800 border border-zinc-700 py-3 text-white focus:border-rose-500 focus:outline-hidden"
-						onkeydown={(e) => e.key === 'Enter' && handlePinSubmit()}
-						autofocus
-					/>
+				<div>
+					<div class="mt-6 relative flex items-center justify-center">
+						<input
+							type={showPinReveal ? 'text' : 'password'}
+							bind:value={pinInput}
+							maxlength="6"
+							placeholder={showPinReveal ? '1234' : '••••'}
+							class="w-full text-center {showPinReveal ? 'tracking-[0.4em]' : 'tracking-[1em]'} text-3xl font-black rounded-2xl bg-zinc-800 border border-zinc-700 py-3 pl-12 pr-12 text-white focus:border-rose-500 focus:outline-hidden font-mono"
+							onkeydown={(e) => e.key === 'Enter' && handlePinSubmit()}
+							autofocus
+						/>
+						<button
+							type="button"
+							onclick={() => (showPinReveal = !showPinReveal)}
+							class="absolute right-3 p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-700/60 transition-colors cursor-pointer"
+							title={showPinReveal ? 'Sembunyikan PIN' : 'Tampilkan PIN'}
+							aria-label={showPinReveal ? 'Sembunyikan PIN' : 'Tampilkan PIN'}
+						>
+							{#if showPinReveal}
+								<EyeOff class="h-5 w-5" />
+							{:else}
+								<Eye class="h-5 w-5" />
+							{/if}
+						</button>
+					</div>
 					{#if pinError}
 						<p class="text-xs font-semibold text-rose-400 mt-2">{pinError}</p>
 					{/if}

@@ -3,6 +3,11 @@ import type { KioskSettings } from '$lib/types';
 
 const STORAGE_KEY = 'chekiyuume_kiosk_settings';
 
+const envPin =
+	(typeof import.meta !== 'undefined' &&
+		(import.meta.env?.PUBLIC_ADMIN_PIN || import.meta.env?.VITE_ADMIN_PIN)) ||
+	'';
+
 const defaultSettings: KioskSettings = {
 	cameraSource: 'internal',
 	cameraDeviceId: '',
@@ -11,10 +16,7 @@ const defaultSettings: KioskSettings = {
 	countdownSeconds: 5,
 	btsDurationSeconds: 3,
 	autoResetSeconds: 60,
-	adminPin:
-		(typeof import.meta !== 'undefined' &&
-			(import.meta.env?.PUBLIC_ADMIN_PIN || import.meta.env?.VITE_ADMIN_PIN)) ||
-		'1234',
+	adminPin: envPin || '1234',
 	kioskTitle: 'CHEKIYUUME',
 	kioskSubtitle: 'PHOTOBOOTH STUDIO',
 	cloudProvider: 'cloudinary',
@@ -44,7 +46,12 @@ function loadInitialSettings(): KioskSettings {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (raw) {
-			return { ...defaultSettings, ...JSON.parse(raw) };
+			const parsed = JSON.parse(raw);
+			// Prioritize env PIN if defined and previous storage was default '1234'
+			if (envPin && envPin !== '1234' && parsed.adminPin === '1234') {
+				parsed.adminPin = envPin;
+			}
+			return { ...defaultSettings, ...parsed };
 		}
 	} catch (e) {
 		console.warn('[Settings] Failed to load settings from storage', e);

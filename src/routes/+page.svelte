@@ -21,7 +21,9 @@
 		Settings,
 		Shield,
 		Check,
-		Palette
+		Palette,
+		Eye,
+		EyeOff
 	} from '@lucide/svelte';
 
 	let step = $state<'attract' | 'mode-select' | 'slot-select' | 'theme-select'>('attract');
@@ -37,6 +39,7 @@
 	let showAdminPinModal = $state(false);
 	let adminPinInput = $state('');
 	let adminPinError = $state('');
+	let showAdminPinReveal = $state(false);
 
 	let allFrames = $derived($customFramesStore);
 	let availableThemesForSlot = $derived(getFramesBySlotCount(allFrames, selectedSlotCount));
@@ -88,17 +91,38 @@
 		goto('/capture');
 	}
 
-	function handleAdminPinSubmit() {
-		const correctPin = $settingsStore.adminPin || '1234';
-		if (adminPinInput === correctPin) {
+	async function handleAdminPinSubmit() {
+		const correctPin = ($settingsStore.adminPin || '1234').trim();
+		const input = adminPinInput.trim();
+
+		if (input === correctPin) {
 			showAdminPinModal = false;
 			adminPinInput = '';
 			adminPinError = '';
 			goto('/admin');
-		} else {
-			adminPinError = 'PIN salah. Coba lagi.';
-			adminPinInput = '';
+			return;
 		}
+
+		// Also check live against /api/config in case store hasn't synced yet
+		try {
+			const res = await fetch('/api/config');
+			if (res.ok) {
+				const data = await res.json();
+				if (data && data.adminPin && input === String(data.adminPin).trim()) {
+					settingsStore.updateSettings({ adminPin: data.adminPin });
+					showAdminPinModal = false;
+					adminPinInput = '';
+					adminPinError = '';
+					goto('/admin');
+					return;
+				}
+			}
+		} catch (e) {
+			// offline fallback
+		}
+
+		adminPinError = 'PIN salah. Coba lagi.';
+		adminPinInput = '';
 	}
 </script>
 
@@ -385,16 +409,31 @@
 				<h3 class="text-2xl font-black text-white font-display">Akses Admin Kiosk</h3>
 				<p class="text-xs text-zinc-400 mt-1">Masukkan PIN untuk membuka dashboard booth (Default: 1234)</p>
 
-				<div class="mt-6">
-					<input
-						type="password"
-						bind:value={adminPinInput}
-						maxlength="6"
-						placeholder="••••"
-						class="w-full text-center tracking-[1em] text-3xl font-black rounded-2xl bg-zinc-800 border border-zinc-700 py-3 text-white focus:border-rose-500 focus:outline-hidden"
-						onkeydown={(e) => e.key === 'Enter' && handleAdminPinSubmit()}
-						autofocus
-					/>
+				<div>
+					<div class="mt-6 relative flex items-center justify-center">
+						<input
+							type={showAdminPinReveal ? 'text' : 'password'}
+							bind:value={adminPinInput}
+							maxlength="6"
+							placeholder={showAdminPinReveal ? '1234' : '••••'}
+							class="w-full text-center {showAdminPinReveal ? 'tracking-[0.4em]' : 'tracking-[1em]'} text-3xl font-black rounded-2xl bg-zinc-800 border border-zinc-700 py-3 pl-12 pr-12 text-white focus:border-rose-500 focus:outline-hidden font-mono"
+							onkeydown={(e) => e.key === 'Enter' && handleAdminPinSubmit()}
+							autofocus
+						/>
+						<button
+							type="button"
+							onclick={() => (showAdminPinReveal = !showAdminPinReveal)}
+							class="absolute right-3 p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-700/60 transition-colors cursor-pointer"
+							title={showAdminPinReveal ? 'Sembunyikan PIN' : 'Tampilkan PIN'}
+							aria-label={showAdminPinReveal ? 'Sembunyikan PIN' : 'Tampilkan PIN'}
+						>
+							{#if showAdminPinReveal}
+								<EyeOff class="h-5 w-5" />
+							{:else}
+								<Eye class="h-5 w-5" />
+							{/if}
+						</button>
+					</div>
 					{#if adminPinError}
 						<p class="text-xs font-semibold text-rose-400 mt-2">{adminPinError}</p>
 					{/if}

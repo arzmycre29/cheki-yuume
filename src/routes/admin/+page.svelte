@@ -66,10 +66,13 @@
 		Check,
 		HardDrive,
 		FileJson,
-		Search
+		Search,
+		Eye,
+		EyeOff
 	} from '@lucide/svelte';
 
 	let activeTab = $state<'general' | 'camera' | 'cloud' | 'sessions' | 'frames'>('sessions');
+	let showAdminPin = $state(false);
 
 	// Local settings form binding
 	let formSettings = $state<KioskSettings>({ ...$settingsStore });
@@ -2130,14 +2133,27 @@
 							<label for="admin-pin-input" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
 								PIN Akses Admin Dashboard
 							</label>
-							<div class="relative">
+							<div class="relative flex items-center">
 								<input
 									id="admin-pin-input"
-									type="password"
+									type={showAdminPin ? 'text' : 'password'}
 									bind:value={formSettings.adminPin}
 									placeholder="1234"
-									class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white font-mono tracking-widest focus:border-rose-500 focus:outline-hidden"
+									class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 pl-4 pr-12 text-xs text-white font-mono tracking-widest focus:border-rose-500 focus:outline-hidden"
 								/>
+								<button
+									type="button"
+									onclick={() => (showAdminPin = !showAdminPin)}
+									class="absolute right-3 p-1.5 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-700/60 transition-colors cursor-pointer"
+									title={showAdminPin ? 'Sembunyikan PIN' : 'Tampilkan PIN'}
+									aria-label={showAdminPin ? 'Sembunyikan PIN' : 'Tampilkan PIN'}
+								>
+									{#if showAdminPin}
+										<EyeOff class="h-4 w-4" />
+									{:else}
+										<Eye class="h-4 w-4" />
+									{/if}
+								</button>
 							</div>
 							<p class="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">
 								PIN untuk membuka menu admin dari tombol tersembunyi di pojok kanan atas layar utama.
