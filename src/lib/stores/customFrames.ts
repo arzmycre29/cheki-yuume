@@ -113,26 +113,32 @@ function createCustomFramesStore() {
 			});
 		},
 		syncFromRemote: (remoteFrames: FrameLayout[]): number => {
-			let addedCount = 0;
+			let updatedOrAddedCount = 0;
 			update((curr) => {
-				const existingIds = new Set(curr.map((f) => f.id));
-				const existingNames = new Set(curr.map((f) => f.name.toLowerCase()));
+				const frameMap = new Map<string, FrameLayout>();
+				// Keep standard default frames
+				ALL_FRAME_TEMPLATES.forEach((f) => frameMap.set(f.id, f));
 
-				const newFrames: FrameLayout[] = [];
+				// Load current local frames
+				curr.forEach((f) => frameMap.set(f.id, f));
+
+				// Add or update with remote frames
 				for (const rf of remoteFrames) {
-					if (!existingIds.has(rf.id) && !existingNames.has(rf.name.toLowerCase())) {
-						newFrames.push(rf);
-						addedCount++;
+					const existing = frameMap.get(rf.id);
+					if (!existing) {
+						frameMap.set(rf.id, rf);
+						updatedOrAddedCount++;
+					} else if (JSON.stringify(existing) !== JSON.stringify(rf)) {
+						frameMap.set(rf.id, rf);
+						updatedOrAddedCount++;
 					}
 				}
 
-				if (newFrames.length === 0) return curr;
-
-				const next = [...newFrames, ...curr];
+				const next = Array.from(frameMap.values());
 				persist(next);
 				return next;
 			});
-			return addedCount;
+			return updatedOrAddedCount;
 		},
 		resetToDefault: () => {
 			if (typeof window !== 'undefined') {

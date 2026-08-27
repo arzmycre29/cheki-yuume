@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { get } from 'svelte/store';
 	import { goto } from '$app/navigation';
 	import { sessionStore } from '$lib/stores/session';
 	import { settingsStore } from '$lib/stores/settings';
@@ -707,8 +708,8 @@
 		try {
 			const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
 			if (res.success && res.frames.length > 0) {
-				const added = customFramesStore.syncFromRemote(res.frames);
-				saveMessage = `Berhasil menyinkronkan ${res.count} frame dari Cloudinary! (${added} frame baru ditambahkan)`;
+				const updated = customFramesStore.syncFromRemote(res.frames);
+				saveMessage = `Berhasil menyinkronkan ${res.count} frame dari Cloudinary! (${updated} frame diperbarui/ditambahkan)`;
 			} else if (res.success) {
 				saveMessage = 'Sinkronisasi selesai: Tidak ada frame baru ditemukan di Cloudinary.';
 			} else {
@@ -732,7 +733,8 @@
 			return;
 		}
 
-		const customFrames = allFrames.filter((f) => f.id.startsWith('custom-'));
+		const currentFrames = get(customFramesStore);
+		const customFrames = currentFrames.filter((f) => f.id.startsWith('custom-'));
 		if (customFrames.length === 0) {
 			alert('Belum ada custom frame untuk dicadangkan ke Cloudinary. Tambahkan frame kustom terlebih dahulu.');
 			return;
@@ -741,7 +743,7 @@
 		isBackingUpFrames = true;
 		try {
 			const res = await backupCustomFramesToCloudinary(
-				allFrames,
+				currentFrames,
 				formSettings.cloudinaryCloudName,
 				formSettings.cloudinaryUploadPreset
 			);
@@ -859,7 +861,7 @@
 		) {
 			try {
 				await backupCustomFramesToCloudinary(
-					allFrames,
+					get(customFramesStore),
 					formSettings.cloudinaryCloudName,
 					formSettings.cloudinaryUploadPreset
 				);
