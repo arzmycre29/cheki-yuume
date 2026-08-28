@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Cloudflare Pages Function: Cloudinary Real-Time Manifest Provider
  * Endpoint: GET /api/manifest?type=frames|sessions
  * 
@@ -12,7 +12,7 @@ export async function onRequestGet(context) {
 	const corsHeaders = {
 		'Access-Control-Allow-Origin': '*',
 		'Access-Control-Allow-Methods': 'GET, OPTIONS',
-		'Access-Control-Allow-Headers': 'Content-Type',
+		'Access-Control-Allow-Headers': '*',
 		'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
 		'Content-Type': 'application/json'
 	};
@@ -104,6 +104,88 @@ export async function onRequestGet(context) {
 		}
 
 		const manifestJson = await contentRes.json();
+
+		// If sessions requested, dynamically discover all individual session manifests & photostrips
+		if (type === 'sessions' && apiKey && apiSecret) {
+			try {
+				const sessionMap = new Map();
+				if (manifestJson.sessions && Array.isArray(manifestJson.sessions)) {
+					manifestJson.sessions.forEach((s) => sessionMap.set(s.sessionId, s));
+				}
+
+				// Search for any individual manifest.json files in chekiyuume/sessions/
+				const listRawUrl = `https://api.cloudinary.com/v1_1/${cloudName}/resources/raw/upload?prefix=chekiyuume/sessions/&max_results=500`;
+				const rawListRes = await fetch(listRawUrl, { headers: { Authorization: authHeader }, cache: 'no-store' });
+				if (rawListRes.ok) {
+					const rawData = await rawListRes.json();
+					if (rawData.resources && Array.isArray(rawData.resources)) {
+						for (const resItem of rawData.resources) {
+							if (resItem.public_id.endsWith('/manifest.json') || resItem.public_id.endsWith('/manifest')) {
+								try {
+									const mRes = await fetch(resItem.secure_url, { cache: 'no-store' });
+									if (mRes.ok) {
+										const mJson = await mRes.json();
+										if (mJson && mJson.sessionId && !sessionMap.has(mJson.sessionId)) {
+											sessionMap.set(mJson.sessionId, {
+												sessionId: mJson.sessionId,
+												guestName: mJson.guestName || '',
+												mode: mJson.mode || 'default',
+												layoutId: mJson.layoutId || 'default-4-classic',
+												photoUrl: mJson.photoUrl || undefined,
+												videoUrl: mJson.videoUrl || undefined,
+												shareUrl: mJson.shareUrl || undefined,
+												manifestUrl: resItem.secure_url,
+												photosCount: mJson.photosCount || 4,
+												printCount: mJson.printCount || 0,
+												createdAt: mJson.createdAt || new Date(resItem.created_at).getTime()
+											});
+										}
+									}
+								} catch (_) {}
+							}
+						}
+					}
+				}
+
+				// Also search for any photostrips in chekiyuume/sessions/
+				const listImagesUrl = `https://api.cloudinary.com/v1_1/${cloudName}/resources/image/upload?prefix=chekiyuume/sessions/&max_results=500`;
+				const imgListRes = await fetch(listImagesUrl, { headers: { Authorization: authHeader }, cache: 'no-store' });
+				if (imgListRes.ok) {
+					const imgData = await imgListRes.json();
+					if (imgData.resources && Array.isArray(imgData.resources)) {
+						for (const imgItem of imgData.resources) {
+							const match = imgItem.public_id.match(/(CKY-\d{8}-\d{6}-[A-Z0-9]+)/);
+							if (match) {
+								const sId = match[1];
+								if (!sessionMap.has(sId)) {
+									const folderParts = imgItem.public_id.split('/');
+									const folderName = folderParts.length > 2 ? folderParts[2] : '';
+									const guestName = folderName.replace(`_${sId}`, '').replace(/_/g, ' ') || 'Tamu';
+									sessionMap.set(sId, {
+										sessionId: sId,
+										guestName: guestName,
+										mode: 'default',
+										layoutId: 'default-4-classic',
+										photoUrl: imgItem.secure_url,
+										shareUrl: `https://cheki-yuume.pages.dev/share/${sId}`,
+										photosCount: 4,
+										printCount: 0,
+										createdAt: new Date(imgItem.created_at).getTime()
+									});
+								}
+							}
+						}
+					}
+				}
+
+				const mergedList = Array.from(sessionMap.values()).sort((a, b) => b.createdAt - a.createdAt);
+				manifestJson.totalSessions = mergedList.length;
+				manifestJson.sessions = mergedList;
+			} catch (scanErr) {
+				console.warn('[ApiManifest] Error scanning session folders:', scanErr);
+			}
+		}
+
 		return new Response(
 			JSON.stringify({
 				success: true,
@@ -133,7 +215,7 @@ export async function onRequestOptions() {
 		headers: {
 			'Access-Control-Allow-Origin': '*',
 			'Access-Control-Allow-Methods': 'GET, OPTIONS',
-			'Access-Control-Allow-Headers': 'Content-Type'
+			'Access-Control-Allow-Headers': '*'
 		}
 	});
 }

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Cloudflare Pages Function: Runtime Config Provider
  * Endpoint: GET /api/config
  * 
@@ -10,7 +10,7 @@ export async function onRequestGet(context) {
 	const corsHeaders = {
 		'Access-Control-Allow-Origin': '*',
 		'Access-Control-Allow-Methods': 'GET, OPTIONS',
-		'Access-Control-Allow-Headers': 'Content-Type',
+		'Access-Control-Allow-Headers': '*',
 		'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
 		'Content-Type': 'application/json'
 	};
@@ -46,7 +46,7 @@ export async function onRequestOptions() {
 		headers: {
 			'Access-Control-Allow-Origin': '*',
 			'Access-Control-Allow-Methods': 'GET, OPTIONS',
-			'Access-Control-Allow-Headers': 'Content-Type'
+			'Access-Control-Allow-Headers': '*'
 		}
 	});
 }

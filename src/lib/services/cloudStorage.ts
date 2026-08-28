@@ -595,12 +595,14 @@ export async function recordSessionToCloudinaryManifest(
 		console.log(`[CloudSync] Recording session "${session.sessionId}" (${session.guestName || 'Tamu'}) to global manifest on cloud "${cleanCloud}"...`);
 
 		let existingSessions: CloudSessionSummary[] = [];
-		const candidateUrls: string[] = [
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
+		const candidateUrls: string[] = [];
+		const manifestEndpoint = getApiEndpoint(`/api/manifest?type=sessions&_t=${Date.now()}`);
+		if (manifestEndpoint) candidateUrls.push(manifestEndpoint);
+		candidateUrls.push(
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest?_t=${Date.now()}`
-		];
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest?_t=${Date.now()}`
+		);
 
 		if (typeof localStorage !== 'undefined') {
 			const cachedUrl = localStorage.getItem('cheki_last_sessions_manifest_url');
@@ -615,16 +617,17 @@ export async function recordSessionToCloudinaryManifest(
 			const url = candidateUrls[idx];
 			try {
 				console.log(`[CloudSync] [${idx + 1}/${candidateUrls.length}] Checking existing manifest at: ${url}`);
-				const res = await fetch(url, {
-					cache: 'no-store',
-					headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
-				});
+				const res = await fetch(url, { cache: 'no-store' });
 				console.log(`[CloudSync] -> HTTP ${res.status} ${res.statusText}`);
 				if (res.ok) {
 					const data = await res.json();
 					if (data && Array.isArray(data.sessions)) {
 						existingSessions = data.sessions;
 						console.log(`[CloudSync] ✓ Existing manifest found! Total existing sessions: ${existingSessions.length}`);
+						break;
+					} else if (Array.isArray(data)) {
+						existingSessions = data;
+						console.log(`[CloudSync] ✓ Existing manifest array found! Total sessions: ${existingSessions.length}`);
 						break;
 					}
 				}
