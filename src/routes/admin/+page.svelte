@@ -237,7 +237,12 @@
 
 	async function loadSessions() {
 		const raw = await getAllSessionsFromDB();
+		const validSessions: SessionData[] = [];
 		for (const s of raw) {
+			if (!s || !s.sessionId || !s.sessionId.trim()) {
+				if (s?.sessionId) await deleteSessionFromDB(s.sessionId);
+				continue;
+			}
 			if ((!s.photos || s.photos.length === 0) || !s.photosCount) {
 				const count = getSessionPhotoCount(s);
 				s.photosCount = count;
@@ -252,8 +257,9 @@
 				}
 				await saveSessionToDB(s);
 			}
+			validSessions.push(s);
 		}
-		sessions = raw;
+		sessions = validSessions;
 	}
 
 	async function refreshCameras() {
@@ -2993,6 +2999,13 @@
 			isOpen={isRePrintModalOpen}
 			photostripDataUrl={rePrintSession.photostripDataUrl}
 			onClose={() => { isRePrintModalOpen = false; rePrintSession = null; }}
+			onPrintSuccess={async () => {
+				if (rePrintSession && rePrintSession.sessionId) {
+					rePrintSession.printCount = (rePrintSession.printCount || 0) + 1;
+					await saveSessionToDB(rePrintSession);
+					await loadSessions();
+				}
+			}}
 		/>
 	{/if}
 </div>

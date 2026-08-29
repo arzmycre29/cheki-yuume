@@ -152,8 +152,11 @@
 			printOptions.layoutCategory = layoutCategory;
 			const success = await executePrint(photostripDataUrl, printOptions, isPortraitStrip);
 			if (success) {
-				sessionStore.incrementPrintCount();
-				if (onPrintSuccess) onPrintSuccess();
+				if (onPrintSuccess) {
+					onPrintSuccess();
+				} else {
+					sessionStore.incrementPrintCount();
+				}
 			}
 		} catch (err) {
 			console.error('[PrintModal] Print execution error:', err);

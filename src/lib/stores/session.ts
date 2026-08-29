@@ -270,6 +270,7 @@ function createSessionStore() {
 		},
 		finalizeAndSaveSession: () => {
 			update((s) => {
+				if (!s.sessionId || !s.sessionId.trim()) return s;
 				const updated = { ...s, isOfflineSaved: true };
 				persistToSessionStorage(updated);
 				// Save to permanent IndexedDB ONLY upon reaching result!
@@ -279,6 +280,7 @@ function createSessionStore() {
 		},
 		incrementPrintCount: () => {
 			update((s) => {
+				if (!s.sessionId || !s.sessionId.trim()) return s;
 				const updated = { ...s, printCount: s.printCount + 1 };
 				persistToSessionStorage(updated);
 				saveSessionToDB(updated);
@@ -290,6 +292,7 @@ function createSessionStore() {
 			urls?: { photo?: string; video?: string; share?: string }
 		) => {
 			update((s) => {
+				if (!s.sessionId || !s.sessionId.trim()) return s;
 				const updated: SessionData = {
 					...s,
 					cloudUploadStatus: status,

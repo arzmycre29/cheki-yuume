@@ -30,6 +30,10 @@ function openDB(): Promise<IDBDatabase> {
 
 export async function saveSessionToDB(session: SessionData): Promise<void> {
 	try {
+		if (!session || !session.sessionId || typeof session.sessionId !== 'string' || !session.sessionId.trim()) {
+			console.warn('[DB] Ignored attempt to save session with missing or empty sessionId.');
+			return;
+		}
 		const db = await openDB();
 		const tx = db.transaction(STORE_SESSIONS, 'readwrite');
 		const store = tx.objectStore(STORE_SESSIONS);
@@ -45,6 +49,7 @@ export async function saveSessionToDB(session: SessionData): Promise<void> {
 
 export async function getSessionFromDB(sessionId: string): Promise<SessionData | null> {
 	try {
+		if (!sessionId || !sessionId.trim()) return null;
 		const db = await openDB();
 		const tx = db.transaction(STORE_SESSIONS, 'readonly');
 		const store = tx.objectStore(STORE_SESSIONS);
@@ -82,8 +87,16 @@ export async function getAllSessionsFromDB(): Promise<SessionData[]> {
 		return await new Promise<SessionData[]>((resolve, reject) => {
 			const req = store.getAll();
 			req.onsuccess = () => {
-				const res = (req.result as SessionData[]) || [];
-				res.forEach((s) => {
+				const raw = (req.result as SessionData[]) || [];
+				const valid: SessionData[] = [];
+				for (const s of raw) {
+					// Auto purge ghost records with empty/invalid sessionId
+					if (!s || !s.sessionId || typeof s.sessionId !== 'string' || !s.sessionId.trim()) {
+						if (s && typeof s.sessionId === 'string') {
+							deleteSessionFromDB(s.sessionId).catch(() => {});
+						}
+						continue;
+					}
 					if (s.videostripBlob && !s.videostripUrl) {
 						s.videostripUrl = URL.createObjectURL(s.videostripBlob);
 					}
@@ -94,9 +107,10 @@ export async function getAllSessionsFromDB(): Promise<SessionData[]> {
 							}
 						});
 					}
-				});
-				res.sort((a, b) => b.createdAt - a.createdAt);
-				resolve(res);
+					valid.push(s);
+				}
+				valid.sort((a, b) => b.createdAt - a.createdAt);
+				resolve(valid);
 			};
 			req.onerror = () => reject(req.error);
 		});
