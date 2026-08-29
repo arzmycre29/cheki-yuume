@@ -295,8 +295,8 @@
 						<!-- Mini Thumbnail (Dynamically scaled to fit) -->
 						<div class="flex items-center justify-center flex-1 min-h-0 w-full overflow-hidden my-0.5 sm:my-1">
 							<div
-								class="relative flex flex-col items-center justify-between rounded-lg p-0.5 sm:p-1 shadow-md border border-zinc-700/30 transition-transform group-hover:scale-105"
-								style="background-color: #FFFFFF; height: min(65px, 16vh); width: auto; aspect-ratio: {opt.canvasWidth} / {opt.canvasHeight};"
+								class="relative flex flex-col items-center justify-between rounded-lg p-0.5 sm:p-1 shadow-md border border-zinc-700/30 transition-transform group-hover:scale-105 max-h-full max-w-full"
+								style="background-color: #FFFFFF; height: min(65px, 16vh); max-height: 100%; max-width: 100%; aspect-ratio: {opt.canvasWidth} / {opt.canvasHeight};"
 							>
 								<div class="flex flex-col gap-0.5 w-full flex-1 justify-around overflow-hidden">
 									{#each Array(opt.slotCount) as _}
@@ -366,10 +366,11 @@
 				>
 					{#each availableThemesForSlot as frame}
 						{@const isSelected = selectedLayout.id === frame.id}
+						{@const isSingleCard = frame.totalSlots === 1}
 						<button
 							type="button"
 							onclick={() => handleSelectTheme(frame)}
-							class="group relative flex flex-col items-center justify-between rounded-2xl sm:rounded-3xl p-2 sm:p-3.5 border transition-all duration-200 cursor-pointer shadow-xl shrink-0 w-[125px] sm:w-[160px] lg:w-[185px] h-full max-h-[min(340px,100%)] {isSelected ? 'border-rose-500 bg-zinc-800/95 ring-2 ring-rose-500/60 shadow-rose-500/20 scale-[1.02] z-20' : 'border-zinc-800 bg-zinc-900/90 hover:border-zinc-700 hover:bg-zinc-850 active:scale-98'}"
+							class="group relative flex flex-col items-center justify-between rounded-2xl sm:rounded-3xl p-2 sm:p-3.5 border transition-all duration-200 cursor-pointer shadow-xl shrink-0 {isSingleCard ? 'w-[140px] sm:w-[185px] lg:w-[215px]' : 'w-[125px] sm:w-[160px] lg:w-[185px]'} h-full max-h-[min(340px,100%)] {isSelected ? 'border-rose-500 bg-zinc-800/95 ring-2 ring-rose-500/60 shadow-rose-500/20 scale-[1.02] z-20' : 'border-zinc-800 bg-zinc-900/90 hover:border-zinc-700 hover:bg-zinc-850 active:scale-98'}"
 						>
 							<!-- Selected Check Badge -->
 							{#if isSelected}
@@ -378,11 +379,11 @@
 								</div>
 							{/if}
 
-							<!-- Photostrip Frame Preview (Strict WYSIWYG ratio, clean crisp corners) -->
+							<!-- Photostrip Frame Preview (Strict WYSIWYG ratio, clean crisp corners, no overflow) -->
 							<div class="flex items-center justify-center flex-1 min-h-0 w-full overflow-hidden my-0.5 sm:my-1">
 								<div
-									class="relative rounded-xs shadow-lg border border-zinc-700/60 transition-transform group-hover:scale-105 overflow-hidden"
-									style="background-color: {frame.backgroundColor || '#FFFFFF'}; height: 100%; max-height: 100%; width: auto; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
+									class="relative rounded-xs shadow-lg border border-zinc-700/60 transition-transform group-hover:scale-105 overflow-hidden max-h-full max-w-full"
+									style="background-color: {frame.backgroundColor || '#FFFFFF'}; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
 								>
 									{#if frame.backgroundUrl}
 										<img src={frame.backgroundUrl} alt="Frame" class="absolute inset-0 h-full w-full object-cover pointer-events-none" />

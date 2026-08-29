@@ -1720,8 +1720,8 @@
 							<!-- Mini Frame Thumbnail -->
 							<div class="my-2 flex items-center justify-center h-40 w-full overflow-hidden">
 								<div
-									class="relative rounded-2xl shadow-md border border-zinc-700/40 overflow-hidden"
-									style="background-color: {frame.backgroundColor || '#FFFFFF'}; height: 140px; width: auto; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
+									class="relative rounded-2xl shadow-md border border-zinc-700/40 overflow-hidden max-h-full max-w-full"
+									style="background-color: {frame.backgroundColor || '#FFFFFF'}; height: 140px; max-height: 100%; max-width: 100%; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
 								>
 									{#if frame.backgroundUrl}
 										<img src={frame.backgroundUrl} alt="Background" class="absolute inset-0 h-full w-full object-cover pointer-events-none" />

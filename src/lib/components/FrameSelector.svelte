@@ -38,8 +38,8 @@
 			<!-- Mini Frame Thumbnail Preview (Exact Artwork & Cutout Overlay) -->
 			<div class="my-3 flex items-center justify-center h-44 w-full overflow-hidden">
 				<div
-					class="relative rounded-2xl shadow-lg border border-zinc-700/40 overflow-hidden transition-transform group-hover:scale-105"
-					style="background-color: {layout.backgroundColor || '#FFFFFF'}; height: 150px; width: auto; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
+					class="relative rounded-2xl shadow-lg border border-zinc-700/40 overflow-hidden transition-transform group-hover:scale-105 max-h-full max-w-full"
+					style="background-color: {layout.backgroundColor || '#FFFFFF'}; height: 150px; max-height: 100%; max-width: 100%; aspect-ratio: {layout.canvasWidth} / {layout.canvasHeight};"
 				>
 					<!-- Custom Background if present -->
 					{#if layout.backgroundUrl}
