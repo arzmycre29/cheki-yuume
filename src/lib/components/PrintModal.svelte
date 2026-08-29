@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { PrintOptions } from '$lib/types';
+	import type { PrintOptions, LayoutCategory } from '$lib/types';
 	import { executePrint } from '$lib/services/printEngine';
 	import { sessionStore } from '$lib/stores/session';
 	import { settingsStore } from '$lib/stores/settings';
@@ -15,7 +15,9 @@
 		MoveHorizontal,
 		MoveVertical,
 		LayoutGrid,
-		Leaf
+		Leaf,
+		Grid2x2,
+		CreditCard
 	} from '@lucide/svelte';
 
 	interface Props {
@@ -29,7 +31,18 @@
 
 	let isPrinting = $state(false);
 	let aspectRatio = $state(0.3125); // Default 1:3 vertical photostrip ratio (1080/3456)
-	let isPortraitStrip = $state(true);
+
+	// Layout category derived from aspect ratio:
+	// - 'strip': 4-Cut / 3-Cut (< 0.45)
+	// - 'duo': 2-Cut (0.45 - 0.70)
+	// - 'card': 1-Card / Polaroid (>= 0.70)
+	let layoutCategory: LayoutCategory = $derived.by(() => {
+		if (aspectRatio < 0.45) return 'strip';
+		if (aspectRatio < 0.70) return 'duo';
+		return 'card';
+	});
+
+	let isPortraitStrip = $derived(layoutCategory === 'strip');
 
 	let printOptions = $state<PrintOptions>({
 		paperSize: '4R',
@@ -37,10 +50,11 @@
 		copies: 2,
 		sizeMode: 'actual',
 		alignment: 'top-left',
-		selectedSlot: 3 // Slot 4 (index 3) default for eco-saving
+		selectedSlot: 3,
+		layoutCategory: 'strip'
 	});
 
-	// Preload image to detect exact aspect ratio and initialize smart defaults
+	// Preload image to detect exact aspect ratio and initialize category smart defaults
 	$effect(() => {
 		if (isOpen && photostripDataUrl) {
 			const img = new Image();
@@ -48,29 +62,38 @@
 			img.onload = () => {
 				const ratio = img.naturalWidth / img.naturalHeight;
 				aspectRatio = ratio;
-				isPortraitStrip = ratio < 0.45;
 
 				const defaultPaper = $settingsStore.defaultPaperSize || '4R';
 				printOptions.paperSize = defaultPaper;
 
-				if (isPortraitStrip) {
+				if (ratio < 0.45) {
+					// Strip (4-Cut & 3-Cut)
+					printOptions.layoutCategory = 'strip';
 					printOptions.orientation = 'portrait';
 					printOptions.copies = defaultPaper === '4R' ? 2 : 2;
 					printOptions.sizeMode = 'actual';
 					printOptions.alignment = 'top-left';
 					printOptions.selectedSlot = 3; // Slot 4 default
-				} else {
-					printOptions.paperSize = '4R';
+				} else if (ratio < 0.70) {
+					// Duo Strip (2-Cut)
+					printOptions.layoutCategory = 'duo';
 					printOptions.orientation = 'portrait';
-					printOptions.copies = 1;
+					printOptions.copies = 2;
+					printOptions.sizeMode = 'actual';
+					printOptions.alignment = 'top-left';
+					printOptions.selectedSlot = 0; // Slot 1: Kiri Atas
+				} else {
+					// 1-Card Polaroid (1-Cut)
+					printOptions.layoutCategory = 'card';
+					printOptions.orientation = 'portrait';
+					printOptions.copies = defaultPaper === '4R' ? 1 : 1;
 					printOptions.sizeMode = 'actual';
 					printOptions.alignment = 'center';
-					printOptions.selectedSlot = 0;
+					printOptions.selectedSlot = 0; // Slot 1: Kiri Atas
 				}
 			};
 			img.onerror = () => {
 				aspectRatio = 0.333;
-				isPortraitStrip = true;
 			};
 		}
 	});
@@ -115,7 +138,7 @@
 		}
 	}
 
-	function selectSlotLane(index: number) {
+	function selectSlot(index: number) {
 		const numCopies = printOptions.copies;
 		let target = index;
 		if (numCopies === 2 && target > 2) target = 2;
@@ -126,6 +149,7 @@
 	async function handlePrint() {
 		isPrinting = true;
 		try {
+			printOptions.layoutCategory = layoutCategory;
 			const success = await executePrint(photostripDataUrl, printOptions, isPortraitStrip);
 			if (success) {
 				sessionStore.incrementPrintCount();
@@ -139,18 +163,25 @@
 		}
 	}
 
-	// Dynamic calculation for Portrait mode preview strip scale
-	let portraitScalePercent = $derived.by(() => {
-		const actualImgWidthMm = isPortraitStrip ? 50.8 : 101.6;
-		const paperWidthMm = printOptions.paperSize === 'A4' ? 210 : 101.6;
-		return Math.min((actualImgWidthMm / paperWidthMm) * 100, 92);
-	});
-
+	// Derived helpers
 	let isHorizontalEcoLayout = $derived(
 		printOptions.paperSize === 'A4' &&
 		printOptions.sizeMode === 'actual' &&
+		layoutCategory === 'strip' &&
 		printOptions.orientation === 'landscape'
 	);
+
+	let isA4GridMode = $derived(
+		printOptions.paperSize === 'A4' &&
+		printOptions.sizeMode === 'actual' &&
+		(layoutCategory === 'duo' || layoutCategory === 'card')
+	);
+
+	let portraitScalePercent = $derived.by(() => {
+		const actualImgWidthMm = layoutCategory === 'strip' ? 50.8 : layoutCategory === 'duo' ? 68 : 88;
+		const paperWidthMm = printOptions.paperSize === 'A4' ? 210 : 101.6;
+		return Math.min((actualImgWidthMm / paperWidthMm) * 100, 92);
+	});
 </script>
 
 {#if isOpen}
@@ -173,7 +204,7 @@
 					<div>
 						<h2 class="text-xl sm:text-2xl font-black text-white font-display tracking-tight flex items-center gap-2">
 							<span>Pengaturan Cetak Foto</span>
-							{#if isHorizontalEcoLayout}
+							{#if isHorizontalEcoLayout || isA4GridMode}
 								<span
 									class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
 								>
@@ -181,7 +212,15 @@
 								</span>
 							{/if}
 						</h2>
-						<p class="text-xs text-zinc-400">Pratinjau fisik kertas & tata letak cetak photostrip</p>
+						<p class="text-xs text-zinc-400">
+							{#if layoutCategory === 'card'}
+								Format Polaroid Card (1-Foto) · Grid Matrix A4 / 4R
+							{:else if layoutCategory === 'duo'}
+								Format Duo Strip (2-Foto) · 2×2 Matrix A4 / 4R
+							{:else}
+								Format Photostrip ({aspectRatio < 0.35 ? '4-Cut' : '3-Cut'}) · 4-Slot A4 / 4R
+							{/if}
+						</p>
 					</div>
 				</div>
 				<button
@@ -205,9 +244,9 @@
 							<Layers class="h-3.5 w-3.5 text-indigo-400" />
 							<span>Pratinjau Kertas ({printOptions.paperSize})</span>
 						</span>
-						{#if isHorizontalEcoLayout}
+						{#if isHorizontalEcoLayout || isA4GridMode}
 							<span class="text-[10px] text-indigo-400 font-bold bg-indigo-500/10 px-2 py-0.5 rounded-md border border-indigo-500/20">
-								Pilih Slot 🟢
+								Pilih Kuadran 🟢
 							</span>
 						{/if}
 					</div>
@@ -222,7 +261,7 @@
 							"
 						>
 							{#if isHorizontalEcoLayout}
-								<!-- 4-Slot Eco Mode Matrix (A4 Landscape) -->
+								<!-- 1. A4 Landscape 4-Slot Eco Mode (Strip) -->
 								{@const tops = ['6.73%', '27.95%', '49.16%', '70.37%']}
 								{@const slotLabels = ['Slot 1 (Atas)', 'Slot 2', 'Slot 3', 'Slot 4 (Bawah)']}
 								<div class="relative w-full h-full">
@@ -235,13 +274,12 @@
 												? 'bg-indigo-500/20 border-y border-indigo-500/60 shadow-inner'
 												: 'border-b border-dashed border-zinc-300 hover:bg-zinc-100'}"
 											style="top: {tops[slotIdx]}; height: 21.2%;"
-											onclick={() => selectSlotLane(slotIdx)}
+											onclick={() => selectSlot(slotIdx)}
 											role="button"
 											tabindex="0"
-											onkeydown={(e) => e.key === 'Enter' && selectSlotLane(slotIdx)}
+											onkeydown={(e) => e.key === 'Enter' && selectSlot(slotIdx)}
 										>
 											{#if isActive}
-												<!-- Rotated Strip Thumbnail inside Slot -->
 												<div class="w-[74%] h-[90%] relative overflow-hidden flex items-center justify-center pointer-events-none">
 													<img
 														src={photostripDataUrl}
@@ -262,17 +300,63 @@
 										</div>
 									{/each}
 								</div>
+							{:else if isA4GridMode}
+								<!-- 2. A4 2×2 Grid Matrix (Card & Duo) -->
+								{@const gridLabels = ['1. Kiri Atas', '2. Kanan Atas', '3. Kiri Bawah', '4. Kanan Bawah']}
+								<div class="relative w-full h-full grid grid-cols-2 grid-rows-2">
+									<!-- Center Dashed Cross Guide Lines -->
+									<div class="absolute inset-x-0 top-1/2 border-t border-dashed border-zinc-300 pointer-events-none"></div>
+									<div class="absolute inset-y-0 left-1/2 border-l border-dashed border-zinc-300 pointer-events-none"></div>
+
+									{#each [0, 1, 2, 3] as qIdx}
+										{@const isActive =
+											qIdx >= (printOptions.selectedSlot ?? 0) &&
+											qIdx < (printOptions.selectedSlot ?? 0) + (printOptions.copies || 1)}
+										<div
+											class="w-full h-full flex items-center justify-center p-2 cursor-pointer transition-all duration-150 relative {isActive
+												? 'bg-indigo-500/20 border border-indigo-500/60 shadow-inner'
+												: 'hover:bg-zinc-100'}"
+											onclick={() => selectSlot(qIdx)}
+											role="button"
+											tabindex="0"
+											onkeydown={(e) => e.key === 'Enter' && selectSlot(qIdx)}
+										>
+											{#if isActive}
+												<img
+													src={photostripDataUrl}
+													alt="Grid Item {qIdx + 1}"
+													class="object-contain shadow-xs border border-zinc-300 {layoutCategory === 'card'
+														? 'max-h-[85%] max-w-[85%]'
+														: 'max-h-[90%] max-w-[85%]'}"
+												/>
+											{:else}
+												<span class="text-[9px] font-semibold text-zinc-400 pointer-events-none select-none tracking-tight">
+													{gridLabels[qIdx]}
+												</span>
+											{/if}
+										</div>
+									{/each}
+								</div>
+							{:else if printOptions.paperSize === '4R' && printOptions.sizeMode === 'actual' && layoutCategory === 'card'}
+								<!-- 3. 4R Card Layout (1x centered or 2x stacked) -->
+								{#if printOptions.copies === 2}
+									<div class="w-full h-full flex flex-col justify-around items-center p-2 relative">
+										<div class="absolute inset-x-0 top-1/2 border-t border-dashed border-zinc-300"></div>
+										<img src={photostripDataUrl} alt="Card 1" class="max-h-[44%] max-w-[85%] object-contain shadow-xs border border-zinc-300" />
+										<img src={photostripDataUrl} alt="Card 2" class="max-h-[44%] max-w-[85%] object-contain shadow-xs border border-zinc-300" />
+									</div>
+								{:else}
+									<div class="w-full h-full flex items-center justify-center p-3">
+										<img src={photostripDataUrl} alt="Card Single" class="max-h-[75%] max-w-[85%] object-contain shadow-xs border border-zinc-300" />
+									</div>
+								{/if}
 							{:else if printOptions.sizeMode === 'fit'}
-								<!-- Fit-to-Page Preview -->
+								<!-- 4. Fit-to-Page Preview -->
 								<div class="w-full h-full flex items-center justify-center p-2">
-									<img
-										src={photostripDataUrl}
-										alt="Fit Preview"
-										class="w-full h-full object-contain shadow-xs"
-									/>
+									<img src={photostripDataUrl} alt="Fit Preview" class="w-full h-full object-contain shadow-xs" />
 								</div>
 							{:else}
-								<!-- Standard Portrait / Multi-copies Preview -->
+								<!-- 5. Standard Portrait / Multi-copies Preview -->
 								<div
 									class="w-full h-full flex flex-row gap-2 transition-all p-3 {printOptions.paperSize === 'A4' &&
 									printOptions.alignment === 'top-left'
@@ -295,13 +379,21 @@
 					<!-- Preview Helper Caption -->
 					<div class="w-full mt-2 pt-2 border-t border-zinc-800/60 text-center shrink-0">
 						<p class="text-[11px] text-zinc-400 leading-snug">
-							{#if isHorizontalEcoLayout}
+							{#if isA4GridMode}
 								<span class="text-indigo-300 font-semibold">
-									🌿 Slot {(printOptions.selectedSlot ?? 0) + 1} dipilih.
+									🌿 Mode Grid 2×2: Slot {(printOptions.selectedSlot ?? 0) + 1} dipilih.
+								</span>
+								Kertas A4 dibagi 4 kuadran, sisa potongan aman untuk dipakai lagi.
+							{:else if isHorizontalEcoLayout}
+								<span class="text-indigo-300 font-semibold">
+									🌿 Mode Eco 4-Slot: Slot {(printOptions.selectedSlot ?? 0) + 1} dipilih.
 								</span>
 								Sisa area kertas A4 atas/bawah dapat disimpan dan dipakai lagi.
+							{:else if printOptions.paperSize === '4R' && layoutCategory === 'card'}
+								<span class="text-rose-300 font-semibold">📸 Format Kartu:</span>
+								{printOptions.copies === 2 ? '2 kartu polaroid bertingkat di 1 lembar 4R.' : '1 kartu polaroid pas di tengah lembar 4R.'}
 							{:else if printOptions.paperSize === '4R' && printOptions.copies === 2}
-								<span class="text-rose-300 font-semibold">✨ Standar Booth:</span> 2 strip kembar 2"×6" berdampingan pas di 1 lembar 4R.
+								<span class="text-rose-300 font-semibold">✨ Standar Booth:</span> 2 strip kembar berdampingan pas di 1 lembar 4R.
 							{:else if printOptions.paperSize === 'A4' && printOptions.alignment === 'top-left'}
 								<span class="text-amber-300 font-semibold">✂️ Pojok Kiri Atas:</span> Memudahkan pemotongan dan menyisakan kertas A4.
 							{:else}
@@ -392,7 +484,13 @@
 										<span>Ukuran Asli (Actual)</span>
 									</div>
 									<span class="text-[10px] text-zinc-400 mt-0.5">
-										{isPortraitStrip ? '2" × 6" (5 × 15 cm)' : '4" × 6" (10 × 15 cm)'}
+										{#if layoutCategory === 'card'}
+											3.5" × 3.5" (9 × 9 cm)
+										{:else if layoutCategory === 'duo'}
+											2.5" × 4.5" (7 × 12 cm)
+										{:else}
+											2" × 6" (5 × 15 cm)
+										{/if}
 									</span>
 								</button>
 
@@ -417,7 +515,7 @@
 					{#if printOptions.sizeMode !== 'fit'}
 						<div>
 							<div class="block text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
-								4. Jumlah Salinan ({printOptions.copies}x Strip)
+								4. Jumlah Salinan ({printOptions.copies}x {layoutCategory === 'card' ? 'Kartu' : 'Strip'})
 							</div>
 							<div class="grid grid-cols-3 gap-2">
 								<button
@@ -427,7 +525,7 @@
 										? 'bg-rose-500/20 border-rose-500 text-rose-300'
 										: 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80'}"
 								>
-									1x Strip
+									1x {layoutCategory === 'card' ? 'Kartu' : 'Strip'}
 								</button>
 								<button
 									type="button"
@@ -452,7 +550,39 @@
 						</div>
 					{/if}
 
-					<!-- 5. A4 Landscape Slot Quick Pills (Eco Mode) -->
+					<!-- 5A. A4 2×2 Grid Slot Quick Pills (Card & Duo) -->
+					{#if isA4GridMode}
+						<div>
+							<div class="block text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5 flex items-center justify-between">
+								<span>5. Posisi Kuadran di Kertas A4</span>
+								<span class="text-[10px] text-zinc-500 font-normal">Klik kuadran di pratinjau</span>
+							</div>
+							<div class="grid grid-cols-2 gap-2">
+								{#each [0, 1, 2, 3] as slotNum}
+									{@const isSelected = (printOptions.selectedSlot ?? 0) === slotNum}
+									{@const isSlotDisabled =
+										(printOptions.copies === 2 && slotNum > 2) ||
+										(printOptions.copies === 4 && slotNum > 0)}
+									{@const gridNames = ['Kuadran 1 (Kiri Atas)', 'Kuadran 2 (Kanan Atas)', 'Kuadran 3 (Kiri Bawah)', 'Kuadran 4 (Kanan Bawah)']}
+									<button
+										type="button"
+										onclick={() => selectSlot(slotNum)}
+										disabled={isSlotDisabled}
+										class="py-2.5 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-between gap-1.5 {isSelected
+											? 'bg-indigo-500/25 border-indigo-500 text-indigo-300 shadow-sm shadow-indigo-500/20'
+											: 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80'} disabled:opacity-25 disabled:pointer-events-none"
+									>
+										<span>{gridNames[slotNum]}</span>
+										{#if isSelected}
+											<Check class="h-3.5 w-3.5 text-indigo-400" />
+										{/if}
+									</button>
+								{/each}
+							</div>
+						</div>
+					{/if}
+
+					<!-- 5B. A4 Landscape Slot Quick Pills (Strip Eco Mode) -->
 					{#if isHorizontalEcoLayout}
 						<div>
 							<div class="block text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
@@ -466,7 +596,7 @@
 										(printOptions.copies === 4 && slotNum > 0)}
 									<button
 										type="button"
-										onclick={() => selectSlotLane(slotNum)}
+										onclick={() => selectSlot(slotNum)}
 										disabled={isSlotDisabled}
 										class="py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 {isSelected
 											? 'bg-indigo-500/25 border-indigo-500 text-indigo-300 shadow-sm shadow-indigo-500/20'
@@ -482,8 +612,8 @@
 						</div>
 					{/if}
 
-					<!-- 6. Alignment (A4 Portrait only) -->
-					{#if printOptions.paperSize === 'A4' && printOptions.sizeMode === 'actual' && printOptions.orientation === 'portrait'}
+					<!-- 6. Alignment (A4 Portrait Strip only) -->
+					{#if printOptions.paperSize === 'A4' && printOptions.sizeMode === 'actual' && printOptions.orientation === 'portrait' && layoutCategory === 'strip'}
 						<div>
 							<div class="block text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
 								5. Posisi Cetak di Kertas A4

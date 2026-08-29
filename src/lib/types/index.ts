@@ -98,12 +98,15 @@ export interface KioskSettings {
 	enableSound: boolean;
 }
 
+export type LayoutCategory = 'strip' | 'duo' | 'card';
+
 export interface PrintOptions {
 	paperSize: '4R' | 'A4';
 	orientation: 'portrait' | 'landscape';
 	copies: 1 | 2 | 4;
 	sizeMode: 'actual' | 'fit';
 	alignment: 'top-left' | 'center';
-	selectedSlot?: number; // 0, 1, 2, 3 (index of slot in 4-slot A4 landscape)
+	layoutCategory?: LayoutCategory;
+	selectedSlot?: number; // 0, 1, 2, 3 (index of slot / quadrant)
 	a4SlotLane?: 1 | 2 | 3 | 4;
 }
