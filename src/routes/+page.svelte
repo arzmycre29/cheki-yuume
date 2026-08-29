@@ -18,6 +18,8 @@
 		Zap,
 		ArrowRight,
 		ArrowLeft,
+		ChevronLeft,
+		ChevronRight,
 		Settings,
 		Shield,
 		Check,
@@ -29,8 +31,9 @@
 	let step = $state<'attract' | 'mode-select' | 'slot-select' | 'theme-select'>('attract');
 	let selectedMode = $state<CaptureMode>('default');
 	let selectedSlotCount = $state<number>(4);
-	let selectedLayout = $state<FrameLayout>(ALL_FRAME_TEMPLATES[10]); // 4-Cut Classic White
+	let selectedLayout = $state<FrameLayout>(ALL_FRAME_TEMPLATES[3] || ALL_FRAME_TEMPLATES[0]);
 	let isNameModalOpen = $state(false);
+	let carouselElem = $state<HTMLDivElement | null>(null);
 
 	// Auto-hide Admin Button after 3 seconds
 	let isAdminButtonVisible = $state(true);
@@ -63,7 +66,7 @@
 			step = 'slot-select';
 		} else {
 			// Creative mode: starts 8-shot capture then chooses custom frame
-			selectedLayout = ALL_FRAME_TEMPLATES[10];
+			selectedLayout = ALL_FRAME_TEMPLATES[3] || ALL_FRAME_TEMPLATES[0];
 			isNameModalOpen = true;
 		}
 	}
@@ -76,8 +79,18 @@
 	}
 
 	function handleSelectTheme(layout: FrameLayout) {
-		selectedLayout = layout;
-		isNameModalOpen = true; // Open Guest Name Modal
+		if (selectedLayout.id === layout.id) {
+			isNameModalOpen = true;
+		} else {
+			selectedLayout = layout;
+		}
+	}
+
+	function scrollCarousel(direction: 'left' | 'right') {
+		if (carouselElem) {
+			const scrollAmount = direction === 'left' ? -320 : 320;
+			carouselElem.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+		}
 	}
 
 	function handleStartSession() {
@@ -308,85 +321,132 @@
 
 	{:else if step === 'theme-select'}
 		<!-- Step 3B: Select Visual Frame Theme -->
-		<div class="my-auto flex flex-col items-center justify-center w-full max-w-5xl animate-in fade-in duration-200 gap-2 sm:gap-4">
+		<div class="flex flex-col items-center justify-between w-full max-w-6xl h-full py-2 sm:py-4 px-2 sm:px-4 animate-in fade-in duration-200 select-none">
 			<!-- Header -->
-			<div class="flex items-center justify-between w-full shrink-0">
+			<div class="flex items-center justify-between w-full shrink-0 px-2 sm:px-4 mb-1 sm:mb-2">
 				<button
 					type="button"
 					onclick={() => (step = 'slot-select')}
-					class="flex items-center gap-1.5 rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-400 hover:text-white active:scale-95 cursor-pointer"
+					class="flex items-center gap-1.5 rounded-xl bg-zinc-900/90 border border-zinc-800 px-3.5 py-2 text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all active:scale-95 cursor-pointer shadow-md"
 				>
-					<ArrowLeft class="h-3.5 w-3.5" />
+					<ArrowLeft class="h-4 w-4" />
 					<span>Kembali</span>
 				</button>
 				<div class="text-center">
-					<h2 class="text-sm sm:text-xl lg:text-2xl font-black text-white font-display">Pilih Desain Tema Frame</h2>
-					<p class="text-[9px] sm:text-xs text-zinc-400">Pilih warna atau template frame yang Anda sukai</p>
+					<h2 class="text-base sm:text-2xl lg:text-3xl font-black text-white font-display">Pilih Desain Tema Frame</h2>
+					<p class="text-[10px] sm:text-xs text-zinc-400 mt-0.5">Pilih warna atau template frame yang Anda sukai ({availableThemesForSlot.length} desain)</p>
 				</div>
-				<div class="w-16"></div>
+				<div class="flex items-center gap-1.5 rounded-full bg-rose-500/15 border border-rose-500/30 px-3 py-1 text-[11px] font-extrabold text-rose-300">
+					<span>{selectedSlotCount} Slot Strip</span>
+				</div>
 			</div>
 
-			<!-- Frame Carousel -->
-			<div class="flex items-center justify-start md:justify-center gap-2.5 sm:gap-4 w-full max-w-5xl overflow-x-auto py-1 px-4 scrollbar-none">
-				{#each availableThemesForSlot as frame}
-					{@const isSelected = selectedLayout.id === frame.id}
+			<!-- Frame Carousel Area with Navigation Buttons -->
+			<div class="relative w-full flex-1 min-h-0 flex items-center justify-center my-1 sm:my-3 px-1 sm:px-4">
+				<!-- Left Scroll Arrow -->
+				{#if availableThemesForSlot.length > 4}
 					<button
 						type="button"
-						onclick={() => handleSelectTheme(frame)}
-						class="group flex flex-col items-center justify-between rounded-2xl p-2.5 sm:p-3.5 border transition-all cursor-pointer shadow-xl shrink-0 w-[140px] sm:w-[170px] lg:w-[190px] {isSelected ? 'border-rose-500 bg-zinc-800/90 ring-2 ring-rose-500/50 scale-102' : 'border-zinc-800 bg-zinc-900/80 hover:border-zinc-600'}"
-						style="min-height: min(180px, 52vh); max-height: min(300px, 62vh);"
+						onclick={() => scrollCarousel('left')}
+						class="absolute left-1 sm:left-2 z-30 flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-zinc-900/95 border border-zinc-700/80 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:bg-rose-500 active:scale-95 cursor-pointer"
+						title="Scroll Kiri"
+						aria-label="Scroll Kiri"
 					>
-						<!-- Photostrip Frame Preview (Strict WYSIWYG ratio, clean crisp corners) -->
-						<div class="flex items-center justify-center flex-1 w-full overflow-hidden my-0.5 sm:my-1">
-							<div
-								class="relative rounded-xs shadow-md border border-zinc-700/60 transition-transform group-hover:scale-105 overflow-hidden"
-								style="background-color: {frame.backgroundColor || '#FFFFFF'}; height: min(105px, 30vh); width: auto; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
-							>
-								{#if frame.backgroundUrl}
-									<img src={frame.backgroundUrl} alt="Frame" class="absolute inset-0 h-full w-full object-cover" />
-								{/if}
-
-								{#each frame.slots as slot, idx}
-									{@const leftPct = (slot.x / frame.canvasWidth) * 100}
-									{@const topPct = (slot.y / frame.canvasHeight) * 100}
-									{@const widthPct = (slot.width / frame.canvasWidth) * 100}
-									{@const heightPct = (slot.height / frame.canvasHeight) * 100}
-									<div
-										class="absolute bg-zinc-700/60 border border-zinc-600/40 rounded-xs flex items-center justify-center text-[6px] font-bold text-zinc-300"
-										style="left: {leftPct}%; top: {topPct}%; width: {widthPct}%; height: {heightPct}%;"
-									>
-										{idx + 1}
-									</div>
-								{/each}
-
-								{#if frame.overlayUrl}
-									<img src={frame.overlayUrl} alt="Overlay" class="absolute inset-0 h-full w-full object-cover z-20" />
-								{/if}
-							</div>
-						</div>
-
-						<div class="w-full text-center mt-1 shrink-0">
-							<h4 class="text-[11px] sm:text-xs lg:text-sm font-extrabold text-white font-display line-clamp-1">
-								{frame.name}
-							</h4>
-							<span class="text-[8px] sm:text-[9px] text-zinc-400 uppercase font-semibold">
-								{frame.aspectRatioLabel || `${frame.totalSlots} Pose`}
-							</span>
-						</div>
+						<ChevronLeft class="h-5 w-5 sm:h-6 sm:w-6" />
 					</button>
-				{/each}
+				{/if}
+
+				<!-- Left Gradient Fade Indicator -->
+				<div class="absolute left-0 top-0 bottom-0 w-8 sm:w-12 bg-gradient-to-r from-zinc-950/90 to-transparent z-10 pointer-events-none rounded-l-2xl"></div>
+
+				<!-- Carousel Scroll Container -->
+				<div
+					bind:this={carouselElem}
+					class="flex items-center gap-3 sm:gap-5 overflow-x-auto py-3 px-8 sm:px-14 scrollbar-none w-full scroll-smooth {availableThemesForSlot.length <= 4 ? 'justify-center' : 'justify-start'}"
+				>
+					{#each availableThemesForSlot as frame}
+						{@const isSelected = selectedLayout.id === frame.id}
+						<button
+							type="button"
+							onclick={() => handleSelectTheme(frame)}
+							class="group relative flex flex-col items-center justify-between rounded-3xl p-3 sm:p-4 border transition-all duration-200 cursor-pointer shadow-xl shrink-0 w-[145px] sm:w-[175px] lg:w-[195px] h-[250px] sm:h-[295px] lg:h-[330px] {isSelected ? 'border-rose-500 bg-zinc-800/95 ring-2 ring-rose-500/60 shadow-rose-500/20 scale-[1.03] z-20' : 'border-zinc-800 bg-zinc-900/90 hover:border-zinc-700 hover:bg-zinc-850 active:scale-98'}"
+						>
+							<!-- Selected Check Badge -->
+							{#if isSelected}
+								<div class="absolute top-2.5 right-2.5 flex h-6 w-6 items-center justify-center rounded-full bg-rose-500 text-white shadow-md z-30 animate-in zoom-in-75 duration-150">
+									<Check class="h-3.5 w-3.5 stroke-[3]" />
+								</div>
+							{/if}
+
+							<!-- Photostrip Frame Preview (Strict WYSIWYG ratio, clean crisp corners) -->
+							<div class="flex items-center justify-center flex-1 w-full overflow-hidden my-1">
+								<div
+									class="relative rounded-xs shadow-lg border border-zinc-700/60 transition-transform group-hover:scale-105 overflow-hidden"
+									style="background-color: {frame.backgroundColor || '#FFFFFF'}; height: min(140px, 30vh); width: auto; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
+								>
+									{#if frame.backgroundUrl}
+										<img src={frame.backgroundUrl} alt="Frame" class="absolute inset-0 h-full w-full object-cover pointer-events-none" />
+									{/if}
+
+									{#each frame.slots as slot, idx}
+										{@const leftPct = (slot.x / frame.canvasWidth) * 100}
+										{@const topPct = (slot.y / frame.canvasHeight) * 100}
+										{@const widthPct = (slot.width / frame.canvasWidth) * 100}
+										{@const heightPct = (slot.height / frame.canvasHeight) * 100}
+										<div
+											class="absolute bg-zinc-700/60 border border-zinc-600/40 rounded-xs flex items-center justify-center text-[7px] sm:text-[8px] font-bold text-zinc-300"
+											style="left: {leftPct}%; top: {topPct}%; width: {widthPct}%; height: {heightPct}%;"
+										>
+											{idx + 1}
+										</div>
+									{/each}
+
+									{#if frame.overlayUrl}
+										<img src={frame.overlayUrl} alt="Overlay" class="absolute inset-0 h-full w-full object-cover z-20 pointer-events-none" />
+									{/if}
+								</div>
+							</div>
+
+							<!-- Card Details -->
+							<div class="w-full text-center mt-1.5 shrink-0">
+								<h4 class="text-xs sm:text-sm lg:text-base font-black text-white font-display line-clamp-1 group-hover:text-rose-300 transition-colors">
+									{frame.name}
+								</h4>
+								<span class="inline-block mt-0.5 rounded-full bg-zinc-800/80 px-2.5 py-0.5 text-[9px] sm:text-[10px] text-zinc-400 font-bold uppercase tracking-wider border border-zinc-700/40">
+									{frame.aspectRatioLabel || `${frame.totalSlots} Slot Strip`}
+								</span>
+							</div>
+						</button>
+					{/each}
+				</div>
+
+				<!-- Right Gradient Fade Indicator -->
+				<div class="absolute right-0 top-0 bottom-0 w-8 sm:w-12 bg-gradient-to-l from-zinc-950/90 to-transparent z-10 pointer-events-none rounded-r-2xl"></div>
+
+				<!-- Right Scroll Arrow -->
+				{#if availableThemesForSlot.length > 4}
+					<button
+						type="button"
+						onclick={() => scrollCarousel('right')}
+						class="absolute right-1 sm:right-2 z-30 flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-zinc-900/95 border border-zinc-700/80 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:bg-rose-500 active:scale-95 cursor-pointer"
+						title="Scroll Kanan"
+						aria-label="Scroll Kanan"
+					>
+						<ChevronRight class="h-5 w-5 sm:h-6 sm:w-6" />
+					</button>
+				{/if}
 			</div>
 
 			<!-- Ready to Start CTA -->
-			<div class="mt-1 sm:mt-2 shrink-0">
+			<div class="w-full shrink-0 flex items-center justify-center pt-2 sm:pt-3">
 				<button
 					type="button"
 					onclick={handleStartSession}
-					class="flex items-center gap-2 rounded-full bg-rose-500 hover:bg-rose-600 px-6 sm:px-10 py-2 sm:py-3 text-xs sm:text-sm font-extrabold uppercase tracking-wider text-white shadow-xl shadow-rose-500/30 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+					class="flex items-center gap-2.5 rounded-full bg-rose-500 hover:bg-rose-600 px-8 sm:px-12 py-3 sm:py-3.5 text-xs sm:text-base font-black uppercase tracking-wider text-white shadow-2xl shadow-rose-500/40 transition-all hover:scale-105 active:scale-95 cursor-pointer ring-4 ring-rose-500/20"
 				>
-					<Camera class="h-4 w-4" />
+					<Camera class="h-4 w-4 sm:h-5 sm:w-5" />
 					<span>Mulai Sesi Foto ({selectedLayout.name})</span>
-					<ArrowRight class="h-4 w-4" />
+					<ArrowRight class="h-4 w-4 sm:h-5 sm:w-5" />
 				</button>
 			</div>
 		</div>

@@ -596,7 +596,7 @@ export async function recordSessionToCloudinaryManifest(
 
 		let existingSessions: CloudSessionSummary[] = [];
 		const candidateUrls: string[] = [];
-		const manifestEndpoint = getApiEndpoint(`/api/manifest?type=sessions&_t=${Date.now()}`);
+		const manifestEndpoint = `/api/manifest?type=sessions&_t=${Date.now()}`;
 		if (manifestEndpoint) candidateUrls.push(manifestEndpoint);
 		candidateUrls.push(
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
