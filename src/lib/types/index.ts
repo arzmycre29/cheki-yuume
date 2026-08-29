@@ -104,5 +104,6 @@ export interface PrintOptions {
 	copies: 1 | 2 | 4;
 	sizeMode: 'actual' | 'fit';
 	alignment: 'top-left' | 'center';
-	a4SlotLane: 1 | 2 | 3 | 4;
+	selectedSlot?: number; // 0, 1, 2, 3 (index of slot in 4-slot A4 landscape)
+	a4SlotLane?: 1 | 2 | 3 | 4;
 }
