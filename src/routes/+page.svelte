@@ -295,8 +295,8 @@
 						<!-- Mini Thumbnail (Dynamically scaled to fit) -->
 						<div class="flex items-center justify-center flex-1 min-h-0 w-full overflow-hidden my-0.5 sm:my-1">
 							<div
-								class="relative flex flex-col items-center justify-between rounded-lg p-0.5 sm:p-1 shadow-md border border-zinc-700/30 transition-transform group-hover:scale-105 max-h-full max-w-full"
-								style="background-color: #FFFFFF; height: min(65px, 16vh); max-height: 100%; max-width: 100%; aspect-ratio: {opt.canvasWidth} / {opt.canvasHeight};"
+								class="relative flex flex-col items-center justify-between rounded-lg p-0.5 sm:p-1 shadow-md border border-zinc-700/30 transition-transform group-hover:scale-105 max-w-full"
+								style="background-color: #FFFFFF; height: min(65px, 16vh); width: auto; max-width: 100%; aspect-ratio: {opt.canvasWidth} / {opt.canvasHeight};"
 							>
 								<div class="flex flex-col gap-0.5 w-full flex-1 justify-around overflow-hidden">
 									{#each Array(opt.slotCount) as _}
@@ -382,8 +382,8 @@
 							<!-- Photostrip Frame Preview (Strict WYSIWYG ratio, clean crisp corners, no overflow) -->
 							<div class="flex items-center justify-center flex-1 min-h-0 w-full overflow-hidden my-0.5 sm:my-1">
 								<div
-									class="relative rounded-xs shadow-lg border border-zinc-700/60 transition-transform group-hover:scale-105 overflow-hidden max-h-full max-w-full"
-									style="background-color: {frame.backgroundColor || '#FFFFFF'}; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
+									class="relative rounded-xs shadow-lg border border-zinc-700/60 transition-transform group-hover:scale-105 overflow-hidden max-w-full"
+									style="background-color: {frame.backgroundColor || '#FFFFFF'}; height: 100%; width: auto; max-width: 100%; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
 								>
 									{#if frame.backgroundUrl}
 										<img src={frame.backgroundUrl} alt="Frame" class="absolute inset-0 h-full w-full object-cover pointer-events-none" />
