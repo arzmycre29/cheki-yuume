@@ -139,20 +139,20 @@
 	}
 </script>
 
-<div class="relative flex h-full w-full flex-col items-center justify-between p-4 sm:p-6 lg:p-8 overflow-hidden select-none">
+<div class="relative flex h-full w-full flex-col items-center justify-between p-2 sm:p-5 lg:p-8 overflow-hidden select-none">
 	<!-- Background Ambient Glow -->
 	<div class="absolute -top-40 -left-40 h-96 w-96 rounded-full bg-rose-500/15 blur-3xl pointer-events-none"></div>
 	<div class="absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-indigo-500/15 blur-3xl pointer-events-none"></div>
 
 	<!-- Top Right: Admin Button -->
-	<div class="fixed top-3 right-3 sm:top-5 sm:right-5 z-40 transition-opacity duration-700 {isAdminButtonVisible ? 'opacity-100' : 'opacity-20 hover:opacity-100'}">
+	<div class="fixed top-2 right-2 sm:top-4 sm:right-4 z-40 transition-opacity duration-700 {isAdminButtonVisible ? 'opacity-100' : 'opacity-20 hover:opacity-100'}">
 		<button
 			type="button"
 			onclick={() => (showAdminPinModal = true)}
-			class="flex items-center gap-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700/60 px-3.5 py-2 text-xs font-bold text-zinc-300 hover:text-white shadow-lg backdrop-blur-md transition-all active:scale-95 cursor-pointer"
+			class="flex items-center gap-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700/60 px-2.5 py-1.5 sm:px-3.5 sm:py-2 text-[10px] sm:text-xs font-bold text-zinc-300 hover:text-white shadow-lg backdrop-blur-md transition-all active:scale-95 cursor-pointer"
 			title="Buka Pengaturan Admin"
 		>
-			<Settings class="h-3.5 w-3.5 text-rose-400" />
+			<Settings class="h-3 sm:h-3.5 w-3 sm:w-3.5 text-rose-400" />
 			<span>Admin</span>
 		</button>
 	</div>
@@ -172,7 +172,7 @@
 					</span>
 				</div>
 
-				<h1 class="text-3xl sm:text-5xl lg:text-7xl font-black tracking-tight text-white font-display">
+				<h1 class="text-2xl sm:text-5xl lg:text-7xl font-black tracking-tight text-white font-display">
 					{$settingsStore.kioskTitle || 'CHEKIYUUME'}
 				</h1>
 				<p class="mt-0.5 sm:mt-1.5 text-[10px] sm:text-sm lg:text-base font-bold tracking-widest text-rose-400 uppercase">
@@ -182,9 +182,9 @@
 					Abadikan momen seru dengan foto beresolusi tinggi & video sequential BTS kekinian.
 				</p>
 
-				<div class="mt-3 sm:mt-6 lg:mt-8 flex items-center gap-2 sm:gap-3 rounded-full bg-rose-500 hover:bg-rose-600 px-6 sm:px-9 lg:px-12 py-2 sm:py-3 lg:py-4 shadow-xl lg:shadow-2xl shadow-rose-500/35 transition-all group-hover:scale-105">
+				<div class="mt-2.5 sm:mt-6 lg:mt-8 flex items-center gap-2 sm:gap-3 rounded-full bg-rose-500 hover:bg-rose-600 px-5 sm:px-9 lg:px-12 py-2 sm:py-3 lg:py-4 shadow-xl lg:shadow-2xl shadow-rose-500/35 transition-all group-hover:scale-105">
 					<span class="h-2 sm:h-2.5 w-2 sm:w-2.5 rounded-full bg-white animate-ping"></span>
-					<span class="text-xs sm:text-sm lg:text-base font-extrabold uppercase tracking-wider text-white">Sentuh Layar untuk Mulai</span>
+					<span class="text-[11px] sm:text-sm lg:text-base font-extrabold uppercase tracking-wider text-white">Sentuh Layar untuk Mulai</span>
 					<ArrowRight class="h-3.5 w-3.5 sm:h-4 sm:w-4 lg:h-5 lg:w-5 text-white group-hover:translate-x-1.5 transition-transform" />
 				</div>
 			</button>
@@ -198,42 +198,42 @@
 				<button
 					type="button"
 					onclick={() => (step = 'attract')}
-					class="flex items-center gap-1.5 rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-1.5 sm:px-3.5 sm:py-2 text-xs font-bold text-zinc-400 hover:text-white active:scale-95 cursor-pointer shadow-md"
+					class="flex items-center gap-1.5 rounded-xl bg-zinc-900 border border-zinc-800 px-2.5 py-1 sm:px-3.5 sm:py-2 text-[10px] sm:text-xs font-bold text-zinc-400 hover:text-white active:scale-95 cursor-pointer shadow-md"
 				>
 					<ArrowLeft class="h-3.5 w-3.5" />
 					<span>Kembali</span>
 				</button>
 				<div class="text-center">
-					<h2 class="text-base sm:text-xl lg:text-2xl font-black text-white font-display">Pilih Mode Photobooth</h2>
-					<p class="text-[10px] sm:text-xs text-zinc-400">Pilih alur preset cepat atau eksplorasi kreatif 8 pose</p>
+					<h2 class="text-sm sm:text-xl lg:text-2xl font-black text-white font-display">Pilih Mode Photobooth</h2>
+					<p class="text-[9px] sm:text-xs text-zinc-400">Pilih alur preset cepat atau eksplorasi kreatif 8 pose</p>
 				</div>
-				<div class="w-16"></div>
+				<div class="w-12 sm:w-16"></div>
 			</div>
 
 			<!-- 2 Mode Cards: Side-by-Side -->
-			<div class="grid grid-cols-2 gap-3 sm:gap-6 lg:gap-8 w-full max-w-3xl justify-center items-stretch">
+			<div class="grid grid-cols-2 gap-2.5 sm:gap-6 lg:gap-8 w-full max-w-3xl justify-center items-stretch">
 				<!-- Mode Default Card -->
 				<button
 					type="button"
 					onclick={() => chooseMode('default')}
-					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-3.5 sm:p-5 lg:p-7 text-center transition-all hover:border-rose-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl lg:shadow-2xl cursor-pointer min-h-[190px] sm:min-h-[250px] lg:min-h-[290px] max-h-[min(70vh,380px)]"
+					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-2.5 sm:p-5 lg:p-7 text-center transition-all hover:border-rose-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl lg:shadow-2xl cursor-pointer min-h-[170px] sm:min-h-[250px] lg:min-h-[290px] max-h-[min(70vh,380px)]"
 				>
 					<div class="flex flex-col items-center">
-						<div class="flex h-9 w-9 sm:h-12 sm:w-12 lg:h-16 lg:w-16 items-center justify-center rounded-xl sm:rounded-2xl lg:rounded-3xl bg-rose-500/10 text-rose-400 border border-rose-500/20 mb-1.5 sm:mb-3 group-hover:scale-110 transition-transform shadow-md">
+						<div class="flex h-8 w-8 sm:h-12 sm:w-12 lg:h-16 lg:w-16 items-center justify-center rounded-xl sm:rounded-2xl lg:rounded-3xl bg-rose-500/10 text-rose-400 border border-rose-500/20 mb-1 sm:mb-3 group-hover:scale-110 transition-transform shadow-md">
 							<Zap class="h-4 w-4 sm:h-6 sm:w-6 lg:h-8 lg:w-8" />
 						</div>
-						<span class="rounded-full bg-rose-500/20 px-2.5 py-0.5 text-[8px] sm:text-[9px] lg:text-[11px] font-extrabold uppercase tracking-wider text-rose-300 border border-rose-500/30 mb-1 sm:mb-2">
+						<span class="rounded-full bg-rose-500/20 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[11px] font-extrabold uppercase tracking-wider text-rose-300 border border-rose-500/30 mb-0.5 sm:mb-2">
 							Rekomendasi Cepat
 						</span>
-						<h3 class="text-xs sm:text-base lg:text-2xl font-black text-white font-display">Mode Default (Preset)</h3>
-						<p class="mt-1 text-[9px] sm:text-xs lg:text-sm text-zinc-400 leading-relaxed max-w-xs line-clamp-2 sm:line-clamp-3">
+						<h3 class="text-[11px] sm:text-base lg:text-2xl font-black text-white font-display">Mode Default (Preset)</h3>
+						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs lg:text-sm text-zinc-400 leading-relaxed max-w-xs line-clamp-2 sm:line-clamp-3">
 							Pilih 1–4 slot foto, lalu foto otomatis langsung terisi ke dalam frame saat berpose.
 						</p>
 					</div>
 
-					<div class="mt-2 sm:mt-4 flex items-center justify-center gap-1.5 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-rose-500 py-1.5 sm:py-2.5 lg:py-3 px-3 sm:px-4 text-[10px] sm:text-xs lg:text-sm font-bold text-white transition-colors shadow-lg">
+					<div class="mt-1.5 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-rose-500 py-1 sm:py-2.5 lg:py-3 px-2 sm:px-4 text-[9px] sm:text-xs lg:text-sm font-bold text-white transition-colors shadow-lg">
 						<span>Pilih Default</span>
-						<ArrowRight class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+						<ArrowRight class="h-3 w-3 sm:h-4 sm:w-4" />
 					</div>
 				</button>
 
@@ -241,24 +241,24 @@
 				<button
 					type="button"
 					onclick={() => chooseMode('creative')}
-					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-3.5 sm:p-5 lg:p-7 text-center transition-all hover:border-indigo-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl lg:shadow-2xl cursor-pointer min-h-[190px] sm:min-h-[250px] lg:min-h-[290px] max-h-[min(70vh,380px)]"
+					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-2.5 sm:p-5 lg:p-7 text-center transition-all hover:border-indigo-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl lg:shadow-2xl cursor-pointer min-h-[170px] sm:min-h-[250px] lg:min-h-[290px] max-h-[min(70vh,380px)]"
 				>
 					<div class="flex flex-col items-center">
-						<div class="flex h-9 w-9 sm:h-12 sm:w-12 lg:h-16 lg:w-16 items-center justify-center rounded-xl sm:rounded-2xl lg:rounded-3xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-1.5 sm:mb-3 group-hover:scale-110 transition-transform shadow-md">
+						<div class="flex h-8 w-8 sm:h-12 sm:w-12 lg:h-16 lg:w-16 items-center justify-center rounded-xl sm:rounded-2xl lg:rounded-3xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-1 sm:mb-3 group-hover:scale-110 transition-transform shadow-md">
 							<Sparkles class="h-4 w-4 sm:h-6 sm:w-6 lg:h-8 lg:w-8" />
 						</div>
-						<span class="rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-[8px] sm:text-[9px] lg:text-[11px] font-extrabold uppercase tracking-wider text-indigo-300 border border-indigo-500/30 mb-1 sm:mb-2">
+						<span class="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[11px] font-extrabold uppercase tracking-wider text-indigo-300 border border-indigo-500/30 mb-0.5 sm:mb-2">
 							Bebas Berkreasi
 						</span>
-						<h3 class="text-xs sm:text-base lg:text-2xl font-black text-white font-display">Mode Creative (8 Pose)</h3>
-						<p class="mt-1 text-[9px] sm:text-xs lg:text-sm text-zinc-400 leading-relaxed max-w-xs line-clamp-2 sm:line-clamp-3">
+						<h3 class="text-[11px] sm:text-base lg:text-2xl font-black text-white font-display">Mode Creative (8 Pose)</h3>
+						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs lg:text-sm text-zinc-400 leading-relaxed max-w-xs line-clamp-2 sm:line-clamp-3">
 							Ambil 8 foto sepuasnya, lalu pilih frame aesthetic dan atur tata letak fotomu bebas.
 						</p>
 					</div>
 
-					<div class="mt-2 sm:mt-4 flex items-center justify-center gap-1.5 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-indigo-500 py-1.5 sm:py-2.5 lg:py-3 px-3 sm:px-4 text-[10px] sm:text-xs lg:text-sm font-bold text-white transition-colors shadow-lg">
+					<div class="mt-1.5 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-indigo-500 py-1 sm:py-2.5 lg:py-3 px-2 sm:px-4 text-[9px] sm:text-xs lg:text-sm font-bold text-white transition-colors shadow-lg">
 						<span>Pilih Creative</span>
-						<ArrowRight class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+						<ArrowRight class="h-3 w-3 sm:h-4 sm:w-4" />
 					</div>
 				</button>
 			</div>
@@ -272,31 +272,31 @@
 				<button
 					type="button"
 					onclick={() => (step = 'mode-select')}
-					class="flex items-center gap-1.5 rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-400 hover:text-white active:scale-95 cursor-pointer"
+					class="flex items-center gap-1.5 rounded-xl bg-zinc-900 border border-zinc-800 px-2.5 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold text-zinc-400 hover:text-white active:scale-95 cursor-pointer"
 				>
 					<ArrowLeft class="h-3.5 w-3.5" />
 					<span>Kembali</span>
 				</button>
 				<div class="text-center">
-					<h2 class="text-sm sm:text-xl lg:text-2xl font-black text-white font-display">Pilih Format Frame Foto</h2>
-					<p class="text-[9px] sm:text-xs text-zinc-400">Tentukan berapa banyak pose dalam 1 photostrip</p>
+					<h2 class="text-xs sm:text-xl lg:text-2xl font-black text-white font-display">Pilih Format Frame Foto</h2>
+					<p class="text-[8px] sm:text-xs text-zinc-400">Tentukan berapa banyak pose dalam 1 photostrip</p>
 				</div>
-				<div class="w-16"></div>
+				<div class="w-12 sm:w-16"></div>
 			</div>
 
 			<!-- 4 Slot Cards: Compact on Phone, Grand on PC -->
-			<div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4 w-full max-w-4xl justify-center items-stretch">
+			<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4 w-full max-w-4xl justify-center items-stretch">
 				{#each DEFAULT_SLOT_OPTIONS as opt}
 					<button
 						type="button"
 						onclick={() => handleSelectSlotCount(opt.slotCount)}
-						class="group flex flex-col items-center justify-between rounded-2xl p-2.5 sm:p-4 border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 text-center transition-all hover:border-rose-500 hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg min-h-[170px] sm:min-h-[220px] lg:min-h-[260px] max-h-[min(68vh,320px)]"
+						class="group flex flex-col items-center justify-between rounded-2xl p-2 sm:p-4 border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 text-center transition-all hover:border-rose-500 hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg min-h-[140px] sm:min-h-[220px] lg:min-h-[260px] max-h-[min(60vh,300px)]"
 					>
 						<!-- Mini Thumbnail (Dynamically scaled to fit) -->
-						<div class="flex items-center justify-center flex-1 w-full overflow-hidden my-0.5 sm:my-1">
+						<div class="flex items-center justify-center flex-1 min-h-0 w-full overflow-hidden my-0.5 sm:my-1">
 							<div
 								class="relative flex flex-col items-center justify-between rounded-lg p-0.5 sm:p-1 shadow-md border border-zinc-700/30 transition-transform group-hover:scale-105"
-								style="background-color: #FFFFFF; height: min(75px, 20vh); width: auto; aspect-ratio: {opt.canvasWidth} / {opt.canvasHeight};"
+								style="background-color: #FFFFFF; height: min(65px, 16vh); width: auto; aspect-ratio: {opt.canvasWidth} / {opt.canvasHeight};"
 							>
 								<div class="flex flex-col gap-0.5 w-full flex-1 justify-around overflow-hidden">
 									{#each Array(opt.slotCount) as _}
@@ -306,11 +306,11 @@
 							</div>
 						</div>
 
-						<div class="w-full mt-1 shrink-0">
-							<span class="rounded-full bg-rose-500/20 px-2 py-0.5 text-[8px] sm:text-[9px] font-bold text-rose-300">
+						<div class="w-full mt-0.5 sm:mt-1 shrink-0">
+							<span class="rounded-full bg-rose-500/20 px-1.5 sm:px-2 py-0.2 sm:py-0.5 text-[7px] sm:text-[9px] font-bold text-rose-300">
 								{opt.aspectRatioLabel}
 							</span>
-							<h4 class="mt-0.5 text-[11px] sm:text-sm lg:text-base font-extrabold text-white font-display">
+							<h4 class="mt-0.5 text-[10px] sm:text-sm lg:text-base font-extrabold text-white font-display line-clamp-1">
 								{opt.title}
 							</h4>
 						</div>
@@ -320,69 +320,69 @@
 		</div>
 
 	{:else if step === 'theme-select'}
-		<!-- Step 3B: Select Visual Frame Theme -->
-		<div class="flex flex-col items-center justify-between w-full max-w-6xl h-full py-2 sm:py-4 px-2 sm:px-4 animate-in fade-in duration-200 select-none">
+		<!-- Step 3B: Select Visual Frame Theme (Strictly Contained, Fluid Fluid Layout) -->
+		<div class="flex flex-col items-center justify-between w-full max-w-6xl h-full py-1 sm:py-3 px-1 sm:px-3 animate-in fade-in duration-200 select-none overflow-hidden">
 			<!-- Header -->
-			<div class="flex items-center justify-between w-full shrink-0 px-2 sm:px-4 mb-1 sm:mb-2">
+			<div class="flex items-center justify-between w-full shrink-0 px-1 sm:px-4 mb-0.5 sm:mb-2">
 				<button
 					type="button"
 					onclick={() => (step = 'slot-select')}
-					class="flex items-center gap-1.5 rounded-xl bg-zinc-900/90 border border-zinc-800 px-3.5 py-2 text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all active:scale-95 cursor-pointer shadow-md"
+					class="flex items-center gap-1 rounded-xl bg-zinc-900/90 border border-zinc-800 px-2.5 py-1 sm:px-3.5 sm:py-2 text-[10px] sm:text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all active:scale-95 cursor-pointer shadow-md"
 				>
-					<ArrowLeft class="h-4 w-4" />
+					<ArrowLeft class="h-3.5 w-3.5" />
 					<span>Kembali</span>
 				</button>
-				<div class="text-center">
-					<h2 class="text-base sm:text-2xl lg:text-3xl font-black text-white font-display">Pilih Desain Tema Frame</h2>
-					<p class="text-[10px] sm:text-xs text-zinc-400 mt-0.5">Pilih warna atau template frame yang Anda sukai ({availableThemesForSlot.length} desain)</p>
+				<div class="text-center px-1">
+					<h2 class="text-xs sm:text-xl lg:text-2xl font-black text-white font-display">Pilih Desain Tema Frame</h2>
+					<p class="text-[8px] sm:text-xs text-zinc-400 mt-0.2 sm:mt-0.5">Pilih warna atau template frame yang Anda sukai ({availableThemesForSlot.length} desain)</p>
 				</div>
-				<div class="flex items-center gap-1.5 rounded-full bg-rose-500/15 border border-rose-500/30 px-3 py-1 text-[11px] font-extrabold text-rose-300">
+				<div class="flex items-center gap-1 rounded-full bg-rose-500/15 border border-rose-500/30 px-2 py-0.5 sm:px-3 sm:py-1 text-[8px] sm:text-[11px] font-extrabold text-rose-300">
 					<span>{selectedSlotCount} Slot Strip</span>
 				</div>
 			</div>
 
 			<!-- Frame Carousel Area with Navigation Buttons -->
-			<div class="relative w-full flex-1 min-h-0 flex items-center justify-center my-1 sm:my-3 px-1 sm:px-4">
+			<div class="relative w-full flex-1 min-h-0 flex items-center justify-center my-0.5 sm:my-2 px-1 sm:px-4 overflow-hidden">
 				<!-- Left Scroll Arrow -->
-				{#if availableThemesForSlot.length > 4}
+				{#if availableThemesForSlot.length > 3}
 					<button
 						type="button"
 						onclick={() => scrollCarousel('left')}
-						class="absolute left-1 sm:left-2 z-30 flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-zinc-900/95 border border-zinc-700/80 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:bg-rose-500 active:scale-95 cursor-pointer"
+						class="absolute left-1 z-30 flex h-7 w-7 sm:h-11 sm:w-11 items-center justify-center rounded-full bg-zinc-900/95 border border-zinc-700/80 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:bg-rose-500 active:scale-95 cursor-pointer top-1/2 -translate-y-1/2"
 						title="Scroll Kiri"
 						aria-label="Scroll Kiri"
 					>
-						<ChevronLeft class="h-5 w-5 sm:h-6 sm:w-6" />
+						<ChevronLeft class="h-4 w-4 sm:h-6 sm:w-6" />
 					</button>
 				{/if}
 
 				<!-- Left Gradient Fade Indicator -->
-				<div class="absolute left-0 top-0 bottom-0 w-8 sm:w-12 bg-gradient-to-r from-zinc-950/90 to-transparent z-10 pointer-events-none rounded-l-2xl"></div>
+				<div class="absolute left-0 top-0 bottom-0 w-6 sm:w-12 bg-gradient-to-r from-zinc-950/90 to-transparent z-10 pointer-events-none rounded-l-2xl"></div>
 
 				<!-- Carousel Scroll Container -->
 				<div
 					bind:this={carouselElem}
-					class="flex items-center gap-3 sm:gap-5 overflow-x-auto py-3 px-8 sm:px-14 scrollbar-none w-full scroll-smooth {availableThemesForSlot.length <= 4 ? 'justify-center' : 'justify-start'}"
+					class="flex items-center gap-2.5 sm:gap-4 lg:gap-5 overflow-x-auto py-1 sm:py-2 px-6 sm:px-14 scrollbar-none w-full h-full max-h-full scroll-smooth {availableThemesForSlot.length <= 4 ? 'justify-center' : 'justify-start'}"
 				>
 					{#each availableThemesForSlot as frame}
 						{@const isSelected = selectedLayout.id === frame.id}
 						<button
 							type="button"
 							onclick={() => handleSelectTheme(frame)}
-							class="group relative flex flex-col items-center justify-between rounded-3xl p-3 sm:p-4 border transition-all duration-200 cursor-pointer shadow-xl shrink-0 w-[145px] sm:w-[175px] lg:w-[195px] h-[250px] sm:h-[295px] lg:h-[330px] {isSelected ? 'border-rose-500 bg-zinc-800/95 ring-2 ring-rose-500/60 shadow-rose-500/20 scale-[1.03] z-20' : 'border-zinc-800 bg-zinc-900/90 hover:border-zinc-700 hover:bg-zinc-850 active:scale-98'}"
+							class="group relative flex flex-col items-center justify-between rounded-2xl sm:rounded-3xl p-2 sm:p-3.5 border transition-all duration-200 cursor-pointer shadow-xl shrink-0 w-[125px] sm:w-[160px] lg:w-[185px] h-full max-h-[min(340px,100%)] {isSelected ? 'border-rose-500 bg-zinc-800/95 ring-2 ring-rose-500/60 shadow-rose-500/20 scale-[1.02] z-20' : 'border-zinc-800 bg-zinc-900/90 hover:border-zinc-700 hover:bg-zinc-850 active:scale-98'}"
 						>
 							<!-- Selected Check Badge -->
 							{#if isSelected}
-								<div class="absolute top-2.5 right-2.5 flex h-6 w-6 items-center justify-center rounded-full bg-rose-500 text-white shadow-md z-30 animate-in zoom-in-75 duration-150">
-									<Check class="h-3.5 w-3.5 stroke-[3]" />
+								<div class="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 flex h-5 w-5 sm:h-6 sm:w-6 items-center justify-center rounded-full bg-rose-500 text-white shadow-md z-30 animate-in zoom-in-75 duration-150">
+									<Check class="h-3 w-3 sm:h-3.5 sm:w-3.5 stroke-[3]" />
 								</div>
 							{/if}
 
 							<!-- Photostrip Frame Preview (Strict WYSIWYG ratio, clean crisp corners) -->
-							<div class="flex items-center justify-center flex-1 w-full overflow-hidden my-1">
+							<div class="flex items-center justify-center flex-1 min-h-0 w-full overflow-hidden my-0.5 sm:my-1">
 								<div
 									class="relative rounded-xs shadow-lg border border-zinc-700/60 transition-transform group-hover:scale-105 overflow-hidden"
-									style="background-color: {frame.backgroundColor || '#FFFFFF'}; height: min(140px, 30vh); width: auto; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
+									style="background-color: {frame.backgroundColor || '#FFFFFF'}; height: 100%; max-height: 100%; width: auto; aspect-ratio: {frame.canvasWidth} / {frame.canvasHeight};"
 								>
 									{#if frame.backgroundUrl}
 										<img src={frame.backgroundUrl} alt="Frame" class="absolute inset-0 h-full w-full object-cover pointer-events-none" />
@@ -394,7 +394,7 @@
 										{@const widthPct = (slot.width / frame.canvasWidth) * 100}
 										{@const heightPct = (slot.height / frame.canvasHeight) * 100}
 										<div
-											class="absolute bg-zinc-700/60 border border-zinc-600/40 rounded-xs flex items-center justify-center text-[7px] sm:text-[8px] font-bold text-zinc-300"
+											class="absolute bg-zinc-700/60 border border-zinc-600/40 rounded-xs flex items-center justify-center text-[6px] sm:text-[8px] font-bold text-zinc-300"
 											style="left: {leftPct}%; top: {topPct}%; width: {widthPct}%; height: {heightPct}%;"
 										>
 											{idx + 1}
@@ -408,11 +408,11 @@
 							</div>
 
 							<!-- Card Details -->
-							<div class="w-full text-center mt-1.5 shrink-0">
-								<h4 class="text-xs sm:text-sm lg:text-base font-black text-white font-display line-clamp-1 group-hover:text-rose-300 transition-colors">
+							<div class="w-full text-center mt-0.5 sm:mt-1 shrink-0">
+								<h4 class="text-[10px] sm:text-xs lg:text-sm font-black text-white font-display line-clamp-1 group-hover:text-rose-300 transition-colors">
 									{frame.name}
 								</h4>
-								<span class="inline-block mt-0.5 rounded-full bg-zinc-800/80 px-2.5 py-0.5 text-[9px] sm:text-[10px] text-zinc-400 font-bold uppercase tracking-wider border border-zinc-700/40">
+								<span class="inline-block mt-0.5 rounded-full bg-zinc-800/80 px-2 py-0.2 sm:py-0.5 text-[7px] sm:text-[9px] text-zinc-400 font-bold uppercase tracking-wider border border-zinc-700/40">
 									{frame.aspectRatioLabel || `${frame.totalSlots} Slot Strip`}
 								</span>
 							</div>
@@ -421,32 +421,32 @@
 				</div>
 
 				<!-- Right Gradient Fade Indicator -->
-				<div class="absolute right-0 top-0 bottom-0 w-8 sm:w-12 bg-gradient-to-l from-zinc-950/90 to-transparent z-10 pointer-events-none rounded-r-2xl"></div>
+				<div class="absolute right-0 top-0 bottom-0 w-6 sm:w-12 bg-gradient-to-l from-zinc-950/90 to-transparent z-10 pointer-events-none rounded-r-2xl"></div>
 
 				<!-- Right Scroll Arrow -->
-				{#if availableThemesForSlot.length > 4}
+				{#if availableThemesForSlot.length > 3}
 					<button
 						type="button"
 						onclick={() => scrollCarousel('right')}
-						class="absolute right-1 sm:right-2 z-30 flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-zinc-900/95 border border-zinc-700/80 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:bg-rose-500 active:scale-95 cursor-pointer"
+						class="absolute right-1 z-30 flex h-7 w-7 sm:h-11 sm:w-11 items-center justify-center rounded-full bg-zinc-900/95 border border-zinc-700/80 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:bg-rose-500 active:scale-95 cursor-pointer top-1/2 -translate-y-1/2"
 						title="Scroll Kanan"
 						aria-label="Scroll Kanan"
 					>
-						<ChevronRight class="h-5 w-5 sm:h-6 sm:w-6" />
+						<ChevronRight class="h-4 w-4 sm:h-6 sm:w-6" />
 					</button>
 				{/if}
 			</div>
 
 			<!-- Ready to Start CTA -->
-			<div class="w-full shrink-0 flex items-center justify-center pt-2 sm:pt-3">
+			<div class="w-full shrink-0 flex items-center justify-center pt-1 sm:pt-2">
 				<button
 					type="button"
 					onclick={handleStartSession}
-					class="flex items-center gap-2.5 rounded-full bg-rose-500 hover:bg-rose-600 px-8 sm:px-12 py-3 sm:py-3.5 text-xs sm:text-base font-black uppercase tracking-wider text-white shadow-2xl shadow-rose-500/40 transition-all hover:scale-105 active:scale-95 cursor-pointer ring-4 ring-rose-500/20"
+					class="flex items-center gap-1.5 sm:gap-2.5 rounded-full bg-rose-500 hover:bg-rose-600 px-5 sm:px-10 py-1.5 sm:py-3 text-[11px] sm:text-sm lg:text-base font-black uppercase tracking-wider text-white shadow-2xl shadow-rose-500/40 transition-all hover:scale-105 active:scale-95 cursor-pointer ring-2 sm:ring-4 ring-rose-500/20"
 				>
-					<Camera class="h-4 w-4 sm:h-5 sm:w-5" />
+					<Camera class="h-3.5 w-3.5 sm:h-5 sm:w-5" />
 					<span>Mulai Sesi Foto ({selectedLayout.name})</span>
-					<ArrowRight class="h-4 w-4 sm:h-5 sm:w-5" />
+					<ArrowRight class="h-3.5 w-3.5 sm:h-5 sm:w-5" />
 				</button>
 			</div>
 		</div>
