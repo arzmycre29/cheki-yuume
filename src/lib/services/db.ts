@@ -168,14 +168,57 @@ export async function deleteAllSessionsFromDB(): Promise<void> {
 }
 
 /**
- * Exports single session photos, BTS videos, photostrip, videostrip, and manifest as a ZIP package
+ * Asynchronously resolves media source (base64 DataURL, Blob, or remote HTTP/HTTPS/blob URL)
+ * into a binary format ready for JSZip packaging without producing 0-byte corrupt entries.
+ */
+async function resolveMediaToBinary(
+	source: string | Blob | undefined | null
+): Promise<Blob | Uint8Array | null> {
+	if (!source) return null;
+	if (source instanceof Blob) return source;
+
+	if (typeof source === 'string') {
+		const trimmed = source.trim();
+		if (trimmed.startsWith('data:')) {
+			const commaIdx = trimmed.indexOf(',');
+			if (commaIdx !== -1) {
+				const base64 = trimmed.substring(commaIdx + 1);
+				const binaryStr = atob(base64);
+				const len = binaryStr.length;
+				const bytes = new Uint8Array(len);
+				for (let i = 0; i < len; i++) {
+					bytes[i] = binaryStr.charCodeAt(i);
+				}
+				return bytes;
+			}
+		} else if (
+			trimmed.startsWith('http://') ||
+			trimmed.startsWith('https://') ||
+			trimmed.startsWith('blob:')
+		) {
+			try {
+				const res = await fetch(trimmed, { cache: 'no-cache' });
+				if (res.ok) {
+					return await res.blob();
+				}
+			} catch (err) {
+				console.warn('[ZIP] Failed to fetch remote media for export:', trimmed, err);
+			}
+		}
+	}
+	return null;
+}
+
+/**
+ * Exports single session photostrip, videostrip, and manifest as a lightweight ZIP package
  */
 export async function createSessionExportZip(session: SessionData): Promise<Blob> {
 	return createBatchSessionExportZip([session]);
 }
 
 /**
- * Exports multiple sessions into a unified ZIP archive organized by session folder
+ * Exports multiple sessions into a unified, lightweight ZIP archive organized by session folder.
+ * Includes photostrip.png, videostrip.mp4 (if present), and manifest.json.
  */
 export async function createBatchSessionExportZip(sessions: SessionData[]): Promise<Blob> {
 	const zip = new JSZip();
@@ -183,48 +226,36 @@ export async function createBatchSessionExportZip(sessions: SessionData[]): Prom
 	for (const session of sessions) {
 		const folder = zip.folder(session.sessionId) || zip;
 
-		// 1. Raw Photos
-		const photosFolder = folder.folder('raw_photos');
-		for (let i = 0; i < session.photos.length; i++) {
-			const p = session.photos[i];
-			if (p.dataUrl) {
-				const base64Data = p.dataUrl.split(',')[1];
-				photosFolder?.file(`photo_${i + 1}.jpg`, base64Data, { base64: true });
+		// 1. Final Photostrip (.png)
+		const photostripSource =
+			session.photostripBlob || session.photostripDataUrl || session.cloudPhotoUrl;
+		if (photostripSource) {
+			const photostripBinary = await resolveMediaToBinary(photostripSource);
+			if (photostripBinary) {
+				folder.file('photostrip.png', photostripBinary);
 			}
 		}
 
-		// 2. BTS Videos
-		const btsFolder = folder.folder('bts_videos');
-		for (let i = 0; i < session.photos.length; i++) {
-			const p = session.photos[i];
-			if (p.btsVideoBlob) {
-				btsFolder?.file(`bts_${i + 1}.webm`, p.btsVideoBlob);
+		// 2. Final Videostrip (.mp4) (if available)
+		const videoSource =
+			session.videostripBlob || session.videostripUrl || session.cloudVideoUrl;
+		if (videoSource) {
+			const videoBinary = await resolveMediaToBinary(videoSource);
+			if (videoBinary) {
+				folder.file('videostrip.mp4', videoBinary);
 			}
 		}
 
-		// 3. Final Photostrip
-		if (session.photostripBlob) {
-			folder.file('photostrip.png', session.photostripBlob);
-		} else if (session.photostripDataUrl) {
-			const base64Data = session.photostripDataUrl.split(',')[1];
-			folder.file('photostrip.png', base64Data, { base64: true });
-		}
-
-		// 4. Final Videostrip
-		if (session.videostripBlob) {
-			folder.file('videostrip.mp4', session.videostripBlob);
-		}
-
-		// 5. Manifest metadata
+		// 3. Manifest metadata (.json)
 		const manifest = {
 			sessionId: session.sessionId,
 			guestName: session.guestName,
 			mode: session.mode,
 			layoutId: session.layoutId,
 			createdAt: new Date(session.createdAt).toISOString(),
-			totalPhotos: session.photos.length,
-			printCount: session.printCount,
-			cloudShareUrl: session.cloudShareUrl
+			totalPhotos: session.photos?.length || session.photosCount || 4,
+			printCount: session.printCount || 0,
+			cloudShareUrl: session.cloudShareUrl || null
 		};
 		folder.file('manifest.json', JSON.stringify(manifest, null, 2));
 	}

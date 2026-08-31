@@ -431,6 +431,10 @@ export async function backupCustomFramesToCloudinary(
 			tags: ['chekiyuume', 'frames_manifest', 'backup']
 		});
 
+		if (typeof localStorage !== 'undefined' && manifestUrl) {
+			localStorage.setItem('cheki_last_frames_manifest_url', manifestUrl);
+		}
+
 		return {
 			success: true,
 			url: manifestUrl,
@@ -464,8 +468,18 @@ export async function retrieveCustomFramesFromCloudinary(
 			`/api/manifest?type=frames&_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/frames_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest?_t=${Date.now()}`
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/frames_manifest.json?_t=${Date.now()}`
 		];
+
+		if (typeof localStorage !== 'undefined') {
+			const cachedUrl = localStorage.getItem('cheki_last_frames_manifest_url');
+			if (cachedUrl) {
+				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
+				const separator = unversionedCached.includes('?') ? '&' : '?';
+				candidateUrls.push(`${unversionedCached}${separator}_t=${Date.now()}`);
+			}
+		}
 
 		let data: any = null;
 		let lastStatus = 0;
@@ -475,7 +489,7 @@ export async function retrieveCustomFramesFromCloudinary(
 				console.log(`[FramesRetrieve] Checking URL: ${url}`);
 				const res = await fetch(url, {
 					cache: 'no-store',
-					headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
+					headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache', 'Accept': 'application/json' }
 				});
 				lastStatus = res.status;
 				console.log(`[FramesRetrieve] -> HTTP ${res.status}`);
@@ -484,6 +498,9 @@ export async function retrieveCustomFramesFromCloudinary(
 					if (json && Array.isArray(json.frames)) {
 						data = json;
 						console.log(`[FramesRetrieve] ✓ Frames manifest parsed successfully! Total frames: ${data.frames.length}`);
+						if (typeof localStorage !== 'undefined') {
+							localStorage.setItem('cheki_last_frames_manifest_url', url.split('?')[0]);
+						}
 						break;
 					}
 				}

@@ -5,6 +5,8 @@
 	import { settingsStore } from '$lib/stores/settings';
 	import { networkStore, initNetworkMonitor } from '$lib/services/networkStatus';
 	import { isFullscreen, toggleFullscreen, onFullscreenChange } from '$lib/utils/fullscreen';
+	import { customFramesStore } from '$lib/stores/customFrames';
+	import { retrieveCustomFramesFromCloudinary } from '$lib/services/cloudStorage';
 	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2, WifiOff, CheckCircle2, Eye, EyeOff } from '@lucide/svelte';
 
 	let { children } = $props();
@@ -42,6 +44,18 @@
 				}
 			})
 			.catch(() => {});
+
+		// Background auto-reconcile custom frames with Cloudinary manifest on startup
+		const settings = $settingsStore;
+		if (settings.cloudProvider === 'cloudinary' && settings.cloudinaryCloudName?.trim()) {
+			retrieveCustomFramesFromCloudinary(settings.cloudinaryCloudName)
+				.then((res) => {
+					if (res.success) {
+						customFramesStore.syncFromRemote(res.frames);
+					}
+				})
+				.catch(() => {});
+		}
 
 		return () => {
 			unbindFullscreen();
