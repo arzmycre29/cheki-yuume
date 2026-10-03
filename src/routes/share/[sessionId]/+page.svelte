@@ -53,28 +53,37 @@
 				console.log(`[Share] Attempt ${attempt}/${maxRetries}: Checking cloud manifest for session "${sId}"...`);
 
 				// 1. Safe query to /api/manifest?type=sessions&id=... (Server filters ONLY this session)
-				try {
-					const res = await fetch(`/api/manifest?type=sessions&id=${encodeURIComponent(sId)}&_t=${Date.now()}`, {
-						cache: 'no-store',
-						headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
-					});
-					if (res.ok) {
-						const data = await res.json();
-						const found = data?.session;
-						if (found && (found.photoUrl || found.videoUrl)) {
-							cloudPhotoUrl = found.photoUrl || null;
-							cloudVideoUrl = found.videoUrl || null;
-							cloudGuestName = found.guestName || null;
-							syncStatus = 'found';
-							console.log('[Share] ✓ Session media found in /api/manifest:', found);
-							return true;
-						}
-					}
-				} catch (apiErr) {
-					console.warn('[Share] /api/manifest fetch warning:', apiErr);
+				const apiEndpoints = [
+					`/api/manifest?type=sessions&id=${encodeURIComponent(sId)}&_t=${Date.now()}`
+				];
+				if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+					apiEndpoints.push(`https://cheki-yuume.pages.dev/api/manifest?type=sessions&id=${encodeURIComponent(sId)}&_t=${Date.now()}`);
 				}
 
-				// 2. Direct per-session candidate lookup on Cloudinary (no global list leakage)
+				for (const endpoint of apiEndpoints) {
+					try {
+						const res = await fetch(endpoint, {
+							cache: 'no-store',
+							headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
+						});
+						if (res.ok) {
+							const data = await res.json();
+							const found = data?.session;
+							if (found && (found.photoUrl || found.videoUrl)) {
+								cloudPhotoUrl = found.photoUrl || null;
+								cloudVideoUrl = found.videoUrl || null;
+								cloudGuestName = found.guestName || null;
+								syncStatus = 'found';
+								console.log('[Share] ✓ Session media found in /api/manifest:', found);
+								return true;
+							}
+						}
+					} catch (apiErr) {
+						console.warn('[Share] /api/manifest fetch warning:', apiErr);
+					}
+				}
+
+				// 2. Direct per-session candidate lookup on Cloudinary
 				let cloudName = 'qhdvucyw';
 				try {
 					const cfgRes = await fetch('/api/config');
@@ -84,9 +93,22 @@
 					}
 				} catch (_) {}
 
-				const candidateUrls = [
-					`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions/${encodeURIComponent(sId)}/manifest.json?_t=${Date.now()}`
+				const candidateFolderNames = [
+					encodeURIComponent(sId),
+					`guest_${encodeURIComponent(sId)}`
 				];
+				if (queryName?.trim()) {
+					const cleanQueryName = queryName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 30);
+					candidateFolderNames.unshift(`${cleanQueryName}_${encodeURIComponent(sId)}`);
+				}
+
+				const candidateUrls: string[] = [];
+				for (const f of candidateFolderNames) {
+					candidateUrls.push(
+						`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions/${f}/manifest.json?_t=${Date.now()}`,
+						`https://res.cloudinary.com/${cloudName}/raw/upload/v1/chekiyuume/sessions/${f}/manifest.json?_t=${Date.now()}`
+					);
+				}
 
 				for (const cUrl of candidateUrls) {
 					try {
@@ -99,6 +121,31 @@
 								cloudGuestName = cJson.guestName || null;
 								syncStatus = 'found';
 								console.log('[Share] ✓ Per-session manifest found:', cJson);
+								return true;
+							}
+						}
+					} catch (_) {}
+				}
+
+				// 3. Fallback to global Cloudinary sessions_manifest.json
+				const globalManifestCandidates = [
+					`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`,
+					`https://res.cloudinary.com/${cloudName}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`
+				];
+
+				for (const gUrl of globalManifestCandidates) {
+					try {
+						const gRes = await fetch(gUrl, { cache: 'no-store' });
+						if (gRes.ok) {
+							const gData = await gRes.json();
+							const list = Array.isArray(gData?.sessions) ? gData.sessions : Array.isArray(gData) ? gData : [];
+							const foundInGlobal = list.find((s: any) => s && s.sessionId === sId);
+							if (foundInGlobal && (foundInGlobal.photoUrl || foundInGlobal.videoUrl)) {
+								cloudPhotoUrl = foundInGlobal.photoUrl || null;
+								cloudVideoUrl = foundInGlobal.videoUrl || null;
+								cloudGuestName = foundInGlobal.guestName || null;
+								syncStatus = 'found';
+								console.log('[Share] ✓ Session found in global sessions_manifest.json:', foundInGlobal);
 								return true;
 							}
 						}

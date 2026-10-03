@@ -16,14 +16,14 @@ const defaultSettings: KioskSettings = {
 	countdownSeconds: 5,
 	btsDurationSeconds: 3,
 	autoResetSeconds: 60,
-	adminPin: envPin || '1234',
+	adminPin: envPin || '0509',
 	kioskTitle: 'CHEKIYUUME',
 	kioskSubtitle: 'PHOTOBOOTH STUDIO',
 	cloudProvider: 'cloudinary',
 	cloudinaryCloudName:
 		(typeof import.meta !== 'undefined' &&
 			(import.meta.env?.PUBLIC_CLOUDINARY_CLOUD_NAME || import.meta.env?.VITE_CLOUDINARY_CLOUD_NAME)) ||
-		'',
+		'qhdvucyw',
 	cloudinaryUploadPreset:
 		(typeof import.meta !== 'undefined' &&
 			(import.meta.env?.PUBLIC_CLOUDINARY_UPLOAD_PRESET || import.meta.env?.VITE_CLOUDINARY_UPLOAD_PRESET)) ||
@@ -31,7 +31,7 @@ const defaultSettings: KioskSettings = {
 	cloudPublicBaseUrl:
 		(typeof import.meta !== 'undefined' &&
 			(import.meta.env?.PUBLIC_SHARE_BASE_URL || import.meta.env?.VITE_SHARE_BASE_URL)) ||
-		'',
+		'https://cheki-yuume.pages.dev',
 	cloudEndpoint: '',
 	cloudBucket: '',
 	cloudAccessKey: '',
@@ -47,9 +47,14 @@ function loadInitialSettings(): KioskSettings {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (raw) {
 			const parsed = JSON.parse(raw);
-			// Prioritize env PIN if defined and previous storage was default '1234'
-			if (envPin && envPin !== '1234' && parsed.adminPin === '1234') {
-				parsed.adminPin = envPin;
+			if (parsed.adminPin === '1234' || !parsed.adminPin) {
+				parsed.adminPin = defaultSettings.adminPin;
+			}
+			if (!parsed.cloudinaryCloudName) {
+				parsed.cloudinaryCloudName = defaultSettings.cloudinaryCloudName;
+			}
+			if (!parsed.cloudPublicBaseUrl) {
+				parsed.cloudPublicBaseUrl = defaultSettings.cloudPublicBaseUrl;
 			}
 			return { ...defaultSettings, ...parsed };
 		}

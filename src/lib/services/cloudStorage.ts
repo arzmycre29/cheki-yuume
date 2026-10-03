@@ -612,29 +612,52 @@ export async function recordSessionToCloudinaryManifest(
 		console.log(`[CloudSync] Recording session "${session.sessionId}" (${session.guestName || 'Tamu'}) to global manifest on cloud "${cleanCloud}"...`);
 
 		let existingSessions: CloudSessionSummary[] = [];
+		let adminPin = '0509';
+		if (typeof localStorage !== 'undefined') {
+			try {
+				const raw = localStorage.getItem('chekiyuume_kiosk_settings');
+				if (raw) {
+					const parsed = JSON.parse(raw);
+					if (parsed?.adminPin) adminPin = parsed.adminPin;
+				}
+			} catch (_) {}
+		}
+		const pinQuery = `&pin=${encodeURIComponent(adminPin)}`;
 		const candidateUrls: string[] = [];
-		const manifestEndpoint = `/api/manifest?type=sessions&_t=${Date.now()}`;
+		const manifestEndpoint = `/api/manifest?type=sessions${pinQuery}&_t=${Date.now()}`;
 		if (manifestEndpoint) candidateUrls.push(manifestEndpoint);
-		candidateUrls.push(
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest?_t=${Date.now()}`
-		);
 
 		if (typeof localStorage !== 'undefined') {
 			const cachedUrl = localStorage.getItem('cheki_last_sessions_manifest_url');
 			if (cachedUrl) {
+				const separator = cachedUrl.includes('?') ? '&' : '?';
+				candidateUrls.push(`${cachedUrl}${separator}_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`);
 				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
 				const sep = unversionedCached.includes('?') ? '&' : '?';
-				candidateUrls.push(`${unversionedCached}${sep}_t=${Date.now()}`);
+				candidateUrls.push(`${unversionedCached}${sep}_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`);
 			}
 		}
+
+		candidateUrls.push(
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`
+		);
 
 		for (let idx = 0; idx < candidateUrls.length; idx++) {
 			const url = candidateUrls[idx];
 			try {
 				console.log(`[CloudSync] [${idx + 1}/${candidateUrls.length}] Checking existing manifest at: ${url}`);
-				const res = await fetch(url, { cache: 'no-store' });
+				const res = await fetch(url, {
+					cache: 'no-store',
+					headers: {
+						'Cache-Control': 'no-cache',
+						'Pragma': 'no-cache',
+						'Accept': 'application/json',
+						'x-admin-pin': adminPin
+					}
+				});
 				console.log(`[CloudSync] -> HTTP ${res.status} ${res.statusText}`);
 				if (res.ok) {
 					const data = await res.json();
@@ -967,10 +990,10 @@ export async function retrieveSessionsFromCloudinary(
 			throw new Error('Cloud Name Cloudinary belum diatur.');
 		}
 
-		let adminPin = pin || '1234';
+		let adminPin = pin || '0509';
 		if (!pin && typeof localStorage !== 'undefined') {
 			try {
-				const raw = localStorage.getItem('chekiyuume_settings');
+				const raw = localStorage.getItem('chekiyuume_kiosk_settings');
 				if (raw) {
 					const parsed = JSON.parse(raw);
 					if (parsed?.adminPin) adminPin = parsed.adminPin;
@@ -988,20 +1011,20 @@ export async function retrieveSessionsFromCloudinary(
 			const cachedUrl = localStorage.getItem('cheki_last_sessions_manifest_url');
 			if (cachedUrl) {
 				const separator = cachedUrl.includes('?') ? '&' : '?';
-				candidateUrls.push(`${cachedUrl}${separator}_t=${Date.now()}`);
+				candidateUrls.push(`${cachedUrl}${separator}_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`);
 				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
 				const uSep = unversionedCached.includes('?') ? '&' : '?';
-				candidateUrls.push(`${unversionedCached}${uSep}_t=${Date.now()}`);
+				candidateUrls.push(`${unversionedCached}${uSep}_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`);
 			}
 		}
 
 		candidateUrls.push(
 			`/api/manifest?type=sessions${pinQuery}&_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/sessions_manifest.json?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/sessions_manifest.json?_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/sessions_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json.json?_t=${Date.now()}`
 		);
@@ -1016,7 +1039,12 @@ export async function retrieveSessionsFromCloudinary(
 				console.log(`[CloudRetrieve] [${idx + 1}/${candidateUrls.length}] Testing URL: ${url}`);
 				const res = await fetch(url, {
 					cache: 'no-store',
-					headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache', 'Accept': 'application/json' }
+					headers: {
+						'Cache-Control': 'no-cache',
+						'Pragma': 'no-cache',
+						'Accept': 'application/json',
+						'x-admin-pin': adminPin
+					}
 				});
 				lastStatus = res.status;
 				console.log(`[CloudRetrieve] -> HTTP ${res.status} ${res.statusText}`);
@@ -1024,9 +1052,16 @@ export async function retrieveSessionsFromCloudinary(
 
 				if (res.ok) {
 					const json = await res.json();
+					let foundSessions: any[] | null = null;
 					if (json && Array.isArray(json.sessions)) {
-						data = json;
-						console.log(`[CloudRetrieve] ✓ Manifest found and parsed from: ${url}! Sessions count: ${json.sessions.length}`);
+						foundSessions = json.sessions;
+					} else if (Array.isArray(json)) {
+						foundSessions = json;
+					}
+
+					if (foundSessions !== null) {
+						data = { sessions: foundSessions };
+						console.log(`[CloudRetrieve] ✓ Manifest found and parsed from: ${url}! Sessions count: ${foundSessions.length}`);
 						if (typeof localStorage !== 'undefined') {
 							localStorage.setItem('cheki_last_sessions_manifest_url', url.split('?')[0]);
 						}

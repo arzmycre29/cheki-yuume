@@ -540,7 +540,7 @@
 		isSyncingSessions = true;
 		try {
 			saveMessage = 'Mengambil daftar sesi dari Cloudinary...';
-			const res = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName);
+			const res = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName, formSettings.adminPin);
 			console.log('[AdminSync] retrieveSessionsFromCloudinary response:', res);
 			if (!res.success) {
 				console.error('[AdminSync] ✗ Sync failed with error:', res.error);
