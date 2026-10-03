@@ -117,12 +117,12 @@ export const ALL_FRAME_TEMPLATES: FrameLayout[] = [
 	// --- THEMATIC 1: RECEIPT PHOTOSTRIP (STRUK KASIR AESTHETIC) ---
 	{
 		id: 'thematic-receipt-classic',
-		name: 'Receipt Photostrip (Struk Kasir)',
-		description: 'Photostrip bernuansa struk belanja aesthetic dengan detail tanggal, pesanan, dan barcode',
+		name: 'Receipt Photostrip (ChekiYuume Mart)',
+		description: 'Format struk belanja minimarket aesthetic lengkap dengan detail belanjaan, tanggal, stempel lunas, QR code, dan barcode kasir',
 		mode: 'thematic',
 		totalSlots: 3,
 		canvasWidth: CANVAS_WIDTH,
-		canvasHeight: 3456,
+		canvasHeight: 3900,
 		slotWidth: SLOT_WIDTH,
 		slotHeight: SLOT_HEIGHT,
 		margin: MARGIN,
@@ -130,31 +130,31 @@ export const ALL_FRAME_TEMPLATES: FrameLayout[] = [
 			{
 				index: 0,
 				x: MARGIN,
-				y: 440,
+				y: 380,
 				width: SLOT_WIDTH,
 				height: SLOT_HEIGHT,
-				borderRadius: 4
+				borderRadius: 0
 			},
 			{
 				index: 1,
 				x: MARGIN,
-				y: 440 + SLOT_HEIGHT + MARGIN,
+				y: 380 + SLOT_HEIGHT + 36,
 				width: SLOT_WIDTH,
 				height: SLOT_HEIGHT,
-				borderRadius: 4
+				borderRadius: 0
 			},
 			{
 				index: 2,
 				x: MARGIN,
-				y: 440 + (SLOT_HEIGHT + MARGIN) * 2,
+				y: 380 + (SLOT_HEIGHT + 36) * 2,
 				width: SLOT_WIDTH,
 				height: SLOT_HEIGHT,
-				borderRadius: 4
+				borderRadius: 0
 			}
 		],
 		backgroundColor: '#FFFFFF',
-		footerHeight: 721,
-		aspectRatioLabel: '5:16 (Thermal Receipt)',
+		footerHeight: 1260,
+		aspectRatioLabel: '5:18 (Thermal Receipt)',
 		recommendedPaper: '58mm'
 	}
 ];
