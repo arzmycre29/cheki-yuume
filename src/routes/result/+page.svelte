@@ -391,7 +391,7 @@
 {#if session.photostripDataUrl}
 	<PrintModal
 		isOpen={isPrintModalOpen}
-		photostripDataUrl={session.photostripDataUrl}
+		photostripDataUrl={session.printPhotostripDataUrl || session.photostripDataUrl}
 		onClose={() => (isPrintModalOpen = false)}
 	/>
 {/if}

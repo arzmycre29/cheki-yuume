@@ -39,6 +39,7 @@ export interface RenderOptions {
 	brandingSubtitle?: string;
 	showTimestamp?: boolean;
 	shareUrl?: string;
+	isForPrint?: boolean;
 }
 
 /**
@@ -122,7 +123,7 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 	const isThematicReceipt = layout.id.startsWith('thematic-receipt');
 
 	let qrImg: HTMLImageElement | null = null;
-	if (isThematicReceipt) {
+	if (isThematicReceipt && options.isForPrint) {
 		const targetShareUrl = options.shareUrl || (
 			sessionId
 				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `/share/${sessionId}`)
@@ -383,8 +384,8 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		ctx.stroke();
 		ctx.setLineDash([]);
 
-		if (qrImg) {
-			// Subtitle above QR
+		if (options.isForPrint && qrImg) {
+			// Physical Print Mode: Render Scannable Download QR Code
 			ctx.textAlign = 'center';
 			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
 			ctx.letterSpacing = '1px';
@@ -403,30 +404,51 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 			ctx.fillStyle = '#333333';
 			const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
 			ctx.fillText(codeStr, centerX, footerTop + 575);
+
+			// Thank You Note
+			ctx.font = '800 24px "Outfit", sans-serif';
+			ctx.letterSpacing = '2px';
+			ctx.fillStyle = '#111111';
+			ctx.fillText(`*** THANK YOU FOR VISITING ***`, centerX, footerTop + 620);
+
+			// Social handle
+			ctx.font = '600 18px "Plus Jakarta Sans", monospace';
+			ctx.letterSpacing = '1px';
+			ctx.fillStyle = '#666666';
+			ctx.fillText(`SHARE YOUR MOMENTS • TAG US @CHEKIYUUME`, centerX, footerTop + 660);
 		} else {
-			// Fallback to barcode if QR image is not available
-			drawBarcode(ctx, centerX, footerTop + 265, 620, 85, sessionId);
+			// Digital Asset Mode: Aesthetic Barcode (Privacy-safe for Social Media)
+			drawBarcode(ctx, centerX, footerTop + 275, 620, 100, sessionId);
 
 			ctx.textAlign = 'center';
-			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
-			ctx.letterSpacing = '0px';
+			ctx.font = '700 22px "Plus Jakarta Sans", monospace';
+			ctx.letterSpacing = '1px';
 			ctx.fillStyle = '#333333';
 			const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
-			ctx.fillText(codeStr, centerX, footerTop + 375);
+			ctx.fillText(codeStr, centerX, footerTop + 400);
+
+			// Dashed Divider below Barcode
+			ctx.setLineDash([8, 6]);
+			ctx.strokeStyle = '#555555';
+			ctx.lineWidth = 2.5;
+			ctx.beginPath();
+			ctx.moveTo(54, footerTop + 450);
+			ctx.lineTo(layout.canvasWidth - 54, footerTop + 450);
+			ctx.stroke();
+			ctx.setLineDash([]);
+
+			// Thank You Note
+			ctx.font = '800 26px "Outfit", sans-serif';
+			ctx.letterSpacing = '2px';
+			ctx.fillStyle = '#111111';
+			ctx.fillText(`*** THANK YOU FOR VISITING ***`, centerX, footerTop + 510);
+
+			// Social handle
+			ctx.font = '600 20px "Plus Jakarta Sans", monospace';
+			ctx.letterSpacing = '1px';
+			ctx.fillStyle = '#666666';
+			ctx.fillText(`SHARE YOUR MOMENTS • TAG US @CHEKIYUUME`, centerX, footerTop + 560);
 		}
-
-		// Thank You Note
-		ctx.textAlign = 'center';
-		ctx.font = '800 24px "Outfit", sans-serif';
-		ctx.letterSpacing = '2px';
-		ctx.fillStyle = '#111111';
-		ctx.fillText(`*** THANK YOU FOR VISITING ***`, centerX, footerTop + 620);
-
-		// Social handle
-		ctx.font = '600 18px "Plus Jakarta Sans", monospace';
-		ctx.letterSpacing = '1px';
-		ctx.fillStyle = '#666666';
-		ctx.fillText(`SHARE YOUR MOMENTS • TAG US @CHEKIYUUME`, centerX, footerTop + 660);
 
 		ctx.restore();
 	} else if (!layout.id.startsWith('default-') && !layout.overlayUrl) {

@@ -3013,10 +3013,10 @@
 	{/if}
 
 	<!-- Re-Print Modal -->
-	{#if rePrintSession && rePrintSession.photostripDataUrl}
+	{#if rePrintSession && (rePrintSession.printPhotostripDataUrl || rePrintSession.photostripDataUrl)}
 		<PrintModal
 			isOpen={isRePrintModalOpen}
-			photostripDataUrl={rePrintSession.photostripDataUrl}
+			photostripDataUrl={rePrintSession.printPhotostripDataUrl || rePrintSession.photostripDataUrl}
 			onClose={() => { isRePrintModalOpen = false; rePrintSession = null; }}
 			onPrintSuccess={async () => {
 				if (rePrintSession && rePrintSession.sessionId) {

@@ -61,6 +61,8 @@ export interface SessionData {
 	stickers?: StickerItem[];
 	photostripDataUrl: string | null;
 	photostripBlob: Blob | null;
+	printPhotostripDataUrl?: string | null;
+	printPhotostripBlob?: Blob | null;
 	videostripBlob: Blob | null;
 	videostripUrl: string | null;
 	printCount: number;

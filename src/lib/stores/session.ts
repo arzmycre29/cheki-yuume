@@ -29,6 +29,8 @@ const initialSession: SessionData = {
 	stickers: [],
 	photostripDataUrl: null,
 	photostripBlob: null,
+	printPhotostripDataUrl: null,
+	printPhotostripBlob: null,
 	videostripBlob: null,
 	videostripUrl: null,
 	printCount: 0,
@@ -69,6 +71,7 @@ function persistToSessionStorage(session: SessionData) {
 			printCount: session.printCount,
 			stickers: session.stickers || [],
 			photostripDataUrl: session.photostripDataUrl || null,
+			printPhotostripDataUrl: session.printPhotostripDataUrl || null,
 			photos: (session.photos || []).map((p) => ({
 				id: p.id,
 				index: p.index,
@@ -246,12 +249,14 @@ function createSessionStore() {
 				return updated;
 			});
 		},
-		setPhotostrip: (dataUrl: string, blob: Blob) => {
+		setPhotostrip: (dataUrl: string, blob: Blob, printDataUrl?: string, printBlob?: Blob) => {
 			update((s) => {
 				const updated = {
 					...s,
 					photostripDataUrl: dataUrl,
-					photostripBlob: blob
+					photostripBlob: blob,
+					printPhotostripDataUrl: printDataUrl || dataUrl,
+					printPhotostripBlob: printBlob || blob
 				};
 				persistToSessionStorage(updated);
 				return updated;

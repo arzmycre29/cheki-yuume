@@ -57,7 +57,8 @@
 			const basePublicUrl = settings.cloudPublicBaseUrl?.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
 			const shareTargetUrl = `${basePublicUrl}/share/${currentSession.sessionId}`;
 
-			const canvas = await renderPhotostripCanvas({
+			// 1a. Digital Photostrip (isForPrint: false -> Privacy-safe barcode for social media & cloud gallery)
+			const digitalCanvas = await renderPhotostripCanvas({
 				layout,
 				photos: currentSession.photos,
 				slotPhotoIds: currentSession.assignedSlotPhotoIds || [],
@@ -66,13 +67,37 @@
 				sessionId: currentSession.sessionId,
 				brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
 				brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
-				shareUrl: shareTargetUrl
+				shareUrl: shareTargetUrl,
+				isForPrint: false
 			});
 
-			const { dataUrl, blob } = exportPhotostrip(canvas);
-			const photoBlob = await blob;
-			sessionStore.setPhotostrip(dataUrl, photoBlob);
-			logDebug('Photostrip rendered OK, dataUrl length:', dataUrl.length);
+			const { dataUrl: digitalDataUrl, blob: digitalBlobPromise } = exportPhotostrip(digitalCanvas);
+			const digitalBlob = await digitalBlobPromise;
+
+			let printDataUrl = digitalDataUrl;
+			let printBlob = digitalBlob;
+
+			// 1b. Physical Print Photostrip (isForPrint: true -> Scannable QR code specifically on printed paper)
+			if (layout.id.startsWith('thematic-receipt')) {
+				const printCanvas = await renderPhotostripCanvas({
+					layout,
+					photos: currentSession.photos,
+					slotPhotoIds: currentSession.assignedSlotPhotoIds || [],
+					stickers: currentSession.stickers || [],
+					guestName: currentSession.guestName,
+					sessionId: currentSession.sessionId,
+					brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
+					brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
+					shareUrl: shareTargetUrl,
+					isForPrint: true
+				});
+				const printExport = exportPhotostrip(printCanvas);
+				printDataUrl = printExport.dataUrl;
+				printBlob = await printExport.blob;
+			}
+
+			sessionStore.setPhotostrip(digitalDataUrl, digitalBlob, printDataUrl, printBlob);
+			logDebug('Photostrip rendered OK, digital dataUrl length:', digitalDataUrl.length);
 
 			// Stage 2: Compile Sequential Videostrip (WebCodecs MP4 with graceful fallback)
 			try {

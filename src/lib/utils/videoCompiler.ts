@@ -1,6 +1,5 @@
 import type { FrameLayout, PhotoItem, StickerItem } from '$lib/types';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
-import QRCode from 'qrcode';
 
 export interface VideoCompilerOptions {
 	layout: FrameLayout;
@@ -114,6 +113,32 @@ function drawToSlot(
 	ctx.restore();
 }
 
+function drawBarcode(
+	ctx: CanvasRenderingContext2D,
+	centerX: number,
+	topY: number,
+	width: number,
+	height: number,
+	code: string
+) {
+	ctx.save();
+	ctx.fillStyle = '#111111';
+	const startX = centerX - width / 2;
+	const barWidth = 3;
+	let curX = startX;
+	const pattern = [2, 1, 3, 1, 2, 4, 1, 2, 3, 2, 1, 4, 2, 1, 3, 1, 4, 2, 1, 2, 3, 1, 2, 4, 1, 3, 2, 1, 4, 2, 1, 3, 2, 1, 2, 3, 1, 4, 2, 1, 3, 2, 1, 4, 2, 1, 3, 1, 2, 4];
+	let pIdx = 0;
+	while (curX < startX + width) {
+		const w = (pattern[pIdx % pattern.length] || 2) * barWidth;
+		if (pIdx % 2 === 0) {
+			ctx.fillRect(curX, topY, Math.min(w, startX + width - curX), height);
+		}
+		curX += w + (pIdx % 3 === 0 ? 3 : 2);
+		pIdx++;
+	}
+	ctx.restore();
+}
+
 function isWebCodecsSupported(): boolean {
 	return typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
 }
@@ -136,7 +161,6 @@ interface DrawFrameOpts {
 	activeSlot: number;
 	overlayImg: HTMLImageElement | null;
 	bgImg: HTMLImageElement | null;
-	qrImg: HTMLImageElement | null;
 	stickers: StickerItem[];
 	isMirrored: boolean;
 	brandingTitle: string;
@@ -162,7 +186,6 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 		preloadedVideos,
 		overlayImg,
 		bgImg,
-		qrImg,
 		stickers,
 		isMirrored,
 		brandingTitle,
@@ -341,48 +364,37 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 		ctx.stroke();
 		ctx.setLineDash([]);
 
-		if (qrImg) {
-			// Subtitle above QR
-			ctx.textAlign = 'center';
-			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
-			ctx.letterSpacing = '1px';
-			ctx.fillStyle = '#222222';
-			ctx.fillText('SCAN TO DOWNLOAD PHOTO & VIDEO', centerX, footerTop + 265);
+		// Digital Video Asset: Aesthetic Barcode (Privacy-safe for Social Media)
+		drawBarcode(ctx, centerX, footerTop + 275, 620, 100, sessionId);
 
-			// Draw QR Code centered
-			const qrSize = 260;
-			const qrX = centerX - qrSize / 2;
-			const qrY = footerTop + 295;
-			ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+		ctx.textAlign = 'center';
+		ctx.font = '700 22px "Plus Jakarta Sans", monospace';
+		ctx.letterSpacing = '1px';
+		ctx.fillStyle = '#333333';
+		const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
+		ctx.fillText(codeStr, centerX, footerTop + 400);
 
-			// Order / Session ID snippet below QR
-			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
-			ctx.letterSpacing = '0px';
-			ctx.fillStyle = '#333333';
-			const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
-			ctx.fillText(codeStr, centerX, footerTop + 575);
-		} else {
-			// Fallback text if QR image is not available
-			ctx.textAlign = 'center';
-			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
-			ctx.letterSpacing = '0px';
-			ctx.fillStyle = '#333333';
-			const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
-			ctx.fillText(codeStr, centerX, footerTop + 375);
-		}
+		// Dashed Divider below Barcode
+		ctx.setLineDash([8, 6]);
+		ctx.strokeStyle = '#555555';
+		ctx.lineWidth = 2.5;
+		ctx.beginPath();
+		ctx.moveTo(54, footerTop + 450);
+		ctx.lineTo(origWidth - 54, footerTop + 450);
+		ctx.stroke();
+		ctx.setLineDash([]);
 
 		// Thank You Note
-		ctx.textAlign = 'center';
-		ctx.font = '800 24px "Outfit", sans-serif';
+		ctx.font = '800 26px "Outfit", sans-serif';
 		ctx.letterSpacing = '2px';
 		ctx.fillStyle = '#111111';
-		ctx.fillText(`*** THANK YOU FOR VISITING ***`, centerX, footerTop + 620);
+		ctx.fillText(`*** THANK YOU FOR VISITING ***`, centerX, footerTop + 510);
 
 		// Social handle
-		ctx.font = '600 18px "Plus Jakarta Sans", monospace';
+		ctx.font = '600 20px "Plus Jakarta Sans", monospace';
 		ctx.letterSpacing = '1px';
 		ctx.fillStyle = '#666666';
-		ctx.fillText(`SHARE YOUR MOMENTS • TAG US @CHEKIYUUME`, centerX, footerTop + 660);
+		ctx.fillText(`SHARE YOUR MOMENTS • TAG US @CHEKIYUUME`, centerX, footerTop + 560);
 
 		ctx.restore();
 	} else if (!layout.id.startsWith('default-') && !overlayImg) {
@@ -483,32 +495,6 @@ export async function compileSequentialVideostrip(
 		} catch (_) {}
 	}
 
-	// Preload QR Code (for Thematic Receipt)
-	let qrImg: HTMLImageElement | null = null;
-	const isThematicReceipt = layout.id.startsWith('thematic-receipt');
-	if (isThematicReceipt) {
-		const targetShareUrl = options.shareUrl || (
-			sessionId
-				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `/share/${sessionId}`)
-				: ''
-		);
-		if (targetShareUrl) {
-			try {
-				const qrDataUrl = await QRCode.toDataURL(targetShareUrl, {
-					width: 320,
-					margin: 1,
-					color: { dark: '#000000', light: '#ffffff' },
-					errorCorrectionLevel: 'M'
-				});
-				if (qrDataUrl) {
-					qrImg = await loadImage(qrDataUrl);
-				}
-			} catch (e) {
-				console.warn('[VideoCompiler] Failed to generate QR code for video:', e);
-			}
-		}
-	}
-
 	// Pre-format receipt date & time
 	const now = new Date();
 	const dateStr = now.toLocaleDateString('id-ID', {
@@ -577,7 +563,6 @@ export async function compileSequentialVideostrip(
 		preloadedVideos,
 		overlayImg,
 		bgImg,
-		qrImg,
 		stickers,
 		isMirrored,
 		brandingTitle,
