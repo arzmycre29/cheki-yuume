@@ -117,22 +117,22 @@ function drawReceiptDivider(
 	if (style === 'double') {
 		ctx.lineWidth = 4;
 		ctx.beginPath();
-		ctx.moveTo(startX, y - 3);
-		ctx.lineTo(endX, y - 3);
+		ctx.moveTo(startX, y - 4);
+		ctx.lineTo(endX, y - 4);
 		ctx.stroke();
 		ctx.beginPath();
 		ctx.moveTo(startX, y + 4);
 		ctx.lineTo(endX, y + 4);
 		ctx.stroke();
 	} else if (style === 'dash') {
-		ctx.lineWidth = 3.5;
-		ctx.setLineDash([14, 10]);
+		ctx.lineWidth = 4;
+		ctx.setLineDash([16, 12]);
 		ctx.beginPath();
 		ctx.moveTo(startX, y);
 		ctx.lineTo(endX, y);
 		ctx.stroke();
 	} else {
-		ctx.lineWidth = 3.5;
+		ctx.lineWidth = 4;
 		ctx.beginPath();
 		ctx.moveTo(startX, y);
 		ctx.lineTo(endX, y);
@@ -188,9 +188,9 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 
 	const isThematicReceipt = layout.id.startsWith('thematic-receipt') || (layout as any).mode === 'thematic';
 
-	// Physical print receipt is taller (3600px) to accommodate the download QR code.
-	// Digital asset receipt is standard height (3240px) without the QR code.
-	const effectiveCanvasHeight = (isThematicReceipt && options.isForPrint) ? 3600 : (isThematicReceipt ? 3240 : layout.canvasHeight);
+	// Physical print receipt is taller (3840px) to accommodate enlarged fonts and scannable QR code.
+	// Digital asset receipt is standard height (3456px) without the QR code.
+	const effectiveCanvasHeight = (isThematicReceipt && options.isForPrint) ? 3840 : (isThematicReceipt ? 3456 : layout.canvasHeight);
 
 	const canvas = document.createElement('canvas');
 	canvas.width = layout.canvasWidth;
@@ -283,20 +283,20 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		const marginX = 54;
 		const endX = layout.canvasWidth - marginX;
 
-		// 2a. Store Branding (Pure monospace, clean aesthetic)
-		ctx.font = '700 52px "Courier New", Courier, monospace';
-		ctx.letterSpacing = '3px';
+		// 2a. Store Branding (Pure monospace, bold & large)
+		ctx.font = '800 80px "Courier New", Courier, monospace';
+		ctx.letterSpacing = '2px';
 		ctx.fillText((brandingTitle || 'CHEKIYUUME').toUpperCase(), centerX, 40);
 
-		ctx.font = '600 28px "Courier New", Courier, monospace';
-		ctx.letterSpacing = '2px';
+		ctx.font = '700 38px "Courier New", Courier, monospace';
+		ctx.letterSpacing = '1px';
 		ctx.fillStyle = '#222222';
-		ctx.fillText((brandingSubtitle || 'PHOTOBOOTH STUDIO').toUpperCase(), centerX, 100);
+		ctx.fillText((brandingSubtitle || 'PHOTOBOOTH STUDIO').toUpperCase(), centerX, 130);
 
 		// Single Dash Divider
-		drawReceiptDivider(ctx, marginX, endX, 150, 'dash');
+		drawReceiptDivider(ctx, marginX, endX, 185, 'dash');
 
-		// 2b. Metadata Rows (Clean 3-line receipt info)
+		// 2b. Metadata Rows (Enlarged 42px monospace)
 		const now = new Date();
 		const dateStr = now.toLocaleDateString('id-ID', {
 			day: '2-digit',
@@ -309,27 +309,27 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		});
 		const transCode = (sessionId ? sessionId.slice(-8) : 'R095UJLG').toUpperCase();
 
-		ctx.font = '700 30px "Courier New", Courier, monospace';
+		ctx.font = '700 42px "Courier New", Courier, monospace';
 		ctx.fillStyle = '#111111';
 
 		// Row 1
 		ctx.textAlign = 'left';
-		ctx.fillText(`DATE : ${dateStr} ${timeStr}`, marginX + 15, 175);
+		ctx.fillText(`DATE : ${dateStr} ${timeStr}`, marginX + 15, 205);
 		ctx.textAlign = 'right';
-		ctx.fillText(`POS : #01`, endX - 15, 175);
+		ctx.fillText(`POS : #01`, endX - 15, 205);
 
 		// Row 2
 		ctx.textAlign = 'left';
-		ctx.fillText(`ORDER: #TR-${transCode}`, marginX + 15, 218);
+		ctx.fillText(`ORDER: #TR-${transCode}`, marginX + 15, 260);
 		ctx.textAlign = 'right';
-		ctx.fillText(`CUTS: 3`, endX - 15, 218);
+		ctx.fillText(`CUTS: 3`, endX - 15, 260);
 
 		// Row 3
 		ctx.textAlign = 'left';
-		ctx.fillText(`GUEST: ${(guestName ? guestName.toUpperCase() : 'FRIEND').slice(0, 16)}`, marginX + 15, 261);
+		ctx.fillText(`GUEST: ${(guestName ? guestName.toUpperCase() : 'FRIEND').slice(0, 16)}`, marginX + 15, 315);
 
 		// Divider before photos
-		drawReceiptDivider(ctx, marginX, endX, 315, 'dash');
+		drawReceiptDivider(ctx, marginX, endX, 375, 'dash');
 
 		ctx.restore();
 	}
@@ -405,7 +405,7 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		if (isThematicReceipt) {
 			ctx.save();
 			ctx.strokeStyle = '#111111';
-			ctx.lineWidth = 3.5;
+			ctx.lineWidth = 4;
 			ctx.strokeRect(slot.x, slot.y, slot.width, slot.height);
 			ctx.restore();
 		}
@@ -439,9 +439,9 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		}
 	}
 
-	// 6. Draw Footer (Clean Aesthetic Receipt - Option 1)
+	// 6. Draw Footer (Clean Aesthetic Receipt - Enlarged Fonts)
 	if (isThematicReceipt) {
-		const footerTop = 2680;
+		const footerTop = 2750;
 		const centerX = layout.canvasWidth / 2;
 		const marginX = 54;
 		const endX = layout.canvasWidth - marginX;
@@ -454,7 +454,7 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		drawReceiptDivider(ctx, marginX, endX, footerTop, 'dash');
 
 		// Column Header (ITEM & QTY)
-		ctx.font = '700 32px "Courier New", Courier, monospace';
+		ctx.font = '700 44px "Courier New", Courier, monospace';
 		ctx.fillStyle = '#111111';
 		ctx.textAlign = 'left';
 		ctx.fillText(`ITEM`, marginX + 15, footerTop + 20);
@@ -462,11 +462,11 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		ctx.fillText(`QTY`, endX - 15, footerTop + 20);
 
 		// Divider
-		drawReceiptDivider(ctx, marginX, endX, footerTop + 62, 'solid');
+		drawReceiptDivider(ctx, marginX, endX, footerTop + 72, 'solid');
 
 		// Items list (Clean 2-line photobooth items)
-		ctx.font = '700 32px "Courier New", Courier, monospace';
-		let itemY = footerTop + 80;
+		ctx.font = '700 44px "Courier New", Courier, monospace';
+		let itemY = footerTop + 92;
 
 		// Item 1
 		ctx.textAlign = 'left';
@@ -474,7 +474,7 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		ctx.textAlign = 'right';
 		ctx.fillText(`1`, endX - 15, itemY);
 
-		itemY += 46;
+		itemY += 58;
 
 		// Item 2
 		ctx.textAlign = 'left';
@@ -482,37 +482,37 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		ctx.textAlign = 'right';
 		ctx.fillText(`1`, endX - 15, itemY);
 
-		itemY += 46;
+		itemY += 58;
 
 		// Divider
-		drawReceiptDivider(ctx, marginX, endX, itemY + 8, 'solid');
+		drawReceiptDivider(ctx, marginX, endX, itemY + 10, 'solid');
 
-		// Total line
-		ctx.font = '700 36px "Courier New", Courier, monospace';
+		// Total line (Big & Bold)
+		ctx.font = '800 56px "Courier New", Courier, monospace';
 		ctx.textAlign = 'left';
-		ctx.fillText(`TOTAL`, marginX + 15, itemY + 26);
+		ctx.fillText(`TOTAL`, marginX + 15, itemY + 28);
 		ctx.textAlign = 'right';
-		ctx.fillText(`PRICELESS`, endX - 15, itemY + 26);
+		ctx.fillText(`PRICELESS`, endX - 15, itemY + 28);
 
 		// Divider
-		drawReceiptDivider(ctx, marginX, endX, itemY + 76, 'dash');
+		drawReceiptDivider(ctx, marginX, endX, itemY + 95, 'dash');
 
 		if (options.isForPrint) {
 			// ========================================================
 			// PHYSICAL PRINT MODE: Includes Scannable Download QR Code
 			// ========================================================
-			const qrSectionY = itemY + 95;
+			const qrSectionY = itemY + 115;
 
 			// QR Code Header
 			ctx.textAlign = 'center';
-			ctx.font = '700 28px "Courier New", Courier, monospace';
+			ctx.font = '700 38px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
 			ctx.fillText('SCAN TO DOWNLOAD PHOTO & VIDEO', centerX, qrSectionY + 10);
 
-			// Draw QR Code centered (260x260)
-			const qrSize = 260;
+			// Draw QR Code centered (270x270)
+			const qrSize = 270;
 			const qrX = centerX - qrSize / 2;
-			const qrY = qrSectionY + 55;
+			const qrY = qrSectionY + 60;
 
 			if (qrCanvas) {
 				ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
@@ -521,71 +521,71 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 				ctx.fillStyle = '#ffffff';
 				ctx.fillRect(qrX, qrY, qrSize, qrSize);
 				ctx.strokeStyle = '#111111';
-				ctx.lineWidth = 3;
+				ctx.lineWidth = 3.5;
 				ctx.strokeRect(qrX, qrY, qrSize, qrSize);
 				ctx.fillStyle = '#111111';
-				ctx.font = 'bold 22px monospace';
-				ctx.fillText('CHEKIYUUME QR', centerX, qrY + 125);
+				ctx.font = 'bold 26px monospace';
+				ctx.fillText('CHEKIYUUME QR', centerX, qrY + 130);
 				ctx.restore();
 			}
 
 			// Order snippet below QR
-			const transNoticeY = qrY + qrSize + 16;
-			ctx.font = '700 24px "Courier New", Courier, monospace';
+			const transNoticeY = qrY + qrSize + 18;
+			ctx.font = '700 36px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
 			ctx.fillText(`* #TR-${transCode} *`, centerX, transNoticeY);
 
 			// Divider before Barcode
-			const barcodeSectionY = transNoticeY + 36;
+			const barcodeSectionY = transNoticeY + 46;
 			drawReceiptDivider(ctx, marginX, endX, barcodeSectionY, 'dash');
 
 			// Barcode Section
 			const barcodeY = barcodeSectionY + 22;
-			drawBarcode(ctx, centerX, barcodeY, 720, 80, sessionId);
+			drawBarcode(ctx, centerX, barcodeY, 760, 85, sessionId);
 
-			const barcodeNumY = barcodeY + 90;
-			ctx.font = '700 26px "Courier New", Courier, monospace';
+			const barcodeNumY = barcodeY + 98;
+			ctx.font = '700 38px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#222222';
 			ctx.fillText(`4  9 0 1 2 3 4   5 6 7 8 9 0`, centerX, barcodeNumY);
 
 			// Divider
-			const footerEndDividerY = barcodeNumY + 38;
+			const footerEndDividerY = barcodeNumY + 48;
 			drawReceiptDivider(ctx, marginX, endX, footerEndDividerY, 'solid');
 
 			// Thank You & IG
-			ctx.font = '700 32px "Courier New", Courier, monospace';
+			ctx.font = '800 48px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
-			ctx.fillText('THANK YOU FOR COMING!', centerX, footerEndDividerY + 22);
+			ctx.fillText('THANK YOU FOR COMING!', centerX, footerEndDividerY + 25);
 
-			ctx.font = '600 26px "Courier New", Courier, monospace';
-			ctx.fillText('@CHEKIYUUME', centerX, footerEndDividerY + 65);
+			ctx.font = '700 38px "Courier New", Courier, monospace';
+			ctx.fillText('@CHEKIYUUME', centerX, footerEndDividerY + 80);
 		} else {
 			// ========================================================
 			// DIGITAL ASSET MODE: Privacy-Safe Barcode (NO QR CODE)
 			// ========================================================
-			const barcodeSectionY = itemY + 95;
+			const barcodeSectionY = itemY + 115;
 
 			// Barcode Section
-			const barcodeY = barcodeSectionY + 15;
-			drawBarcode(ctx, centerX, barcodeY, 720, 80, sessionId);
+			const barcodeY = barcodeSectionY + 20;
+			drawBarcode(ctx, centerX, barcodeY, 760, 85, sessionId);
 
-			const barcodeNumY = barcodeY + 90;
+			const barcodeNumY = barcodeY + 98;
 			ctx.textAlign = 'center';
-			ctx.font = '700 26px "Courier New", Courier, monospace';
+			ctx.font = '700 38px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#222222';
 			ctx.fillText(`4  9 0 1 2 3 4   5 6 7 8 9 0`, centerX, barcodeNumY);
 
 			// Divider
-			const footerEndDividerY = barcodeNumY + 38;
+			const footerEndDividerY = barcodeNumY + 48;
 			drawReceiptDivider(ctx, marginX, endX, footerEndDividerY, 'solid');
 
 			// Thank You & IG
-			ctx.font = '700 32px "Courier New", Courier, monospace';
+			ctx.font = '800 48px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
-			ctx.fillText('THANK YOU FOR COMING!', centerX, footerEndDividerY + 22);
+			ctx.fillText('THANK YOU FOR COMING!', centerX, footerEndDividerY + 25);
 
-			ctx.font = '600 26px "Courier New", Courier, monospace';
-			ctx.fillText('@CHEKIYUUME', centerX, footerEndDividerY + 65);
+			ctx.font = '700 38px "Courier New", Courier, monospace';
+			ctx.fillText('@CHEKIYUUME', centerX, footerEndDividerY + 80);
 		}
 
 		ctx.restore();
