@@ -77,25 +77,25 @@ function drawReceiptStamp(
 	ctx.translate(x, y);
 	ctx.rotate(-0.13); // -7.5 degrees tilt
 	ctx.strokeStyle = '#111111';
-	ctx.lineWidth = 4;
+	ctx.lineWidth = 4.5;
 
 	// Outer stamp border
-	drawRoundedRect(ctx, -125, -38, 250, 76, 8);
+	drawRoundedRect(ctx, -140, -44, 280, 88, 8);
 	ctx.stroke();
 
 	// Inner stamp border
-	ctx.lineWidth = 1.5;
-	drawRoundedRect(ctx, -120, -33, 240, 66, 6);
+	ctx.lineWidth = 2;
+	drawRoundedRect(ctx, -134, -38, 268, 76, 6);
 	ctx.stroke();
 
 	ctx.fillStyle = '#111111';
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
-	ctx.font = '900 28px "Outfit", "Courier New", monospace';
+	ctx.font = '900 32px "Outfit", "Courier New", monospace';
 	ctx.letterSpacing = '3px';
-	ctx.fillText('★ P A I D ★', 0, -8);
+	ctx.fillText('★ P A I D ★', 0, -10);
 
-	ctx.font = '700 16px "Courier New", Courier, monospace';
+	ctx.font = '700 20px "Courier New", Courier, monospace';
 	ctx.letterSpacing = '1px';
 	ctx.fillText(dateStr, 0, 18);
 
@@ -115,24 +115,24 @@ function drawReceiptDivider(
 	ctx.save();
 	ctx.strokeStyle = '#111111';
 	if (style === 'double') {
-		ctx.lineWidth = 3;
+		ctx.lineWidth = 4;
 		ctx.beginPath();
-		ctx.moveTo(startX, y - 2);
-		ctx.lineTo(endX, y - 2);
+		ctx.moveTo(startX, y - 3);
+		ctx.lineTo(endX, y - 3);
 		ctx.stroke();
 		ctx.beginPath();
-		ctx.moveTo(startX, y + 3);
-		ctx.lineTo(endX, y + 3);
+		ctx.moveTo(startX, y + 4);
+		ctx.lineTo(endX, y + 4);
 		ctx.stroke();
 	} else if (style === 'dash') {
-		ctx.lineWidth = 2.5;
-		ctx.setLineDash([12, 8]);
+		ctx.lineWidth = 3.5;
+		ctx.setLineDash([14, 10]);
 		ctx.beginPath();
 		ctx.moveTo(startX, y);
 		ctx.lineTo(endX, y);
 		ctx.stroke();
 	} else {
-		ctx.lineWidth = 2.5;
+		ctx.lineWidth = 3.5;
 		ctx.beginPath();
 		ctx.moveTo(startX, y);
 		ctx.lineTo(endX, y);
@@ -188,9 +188,9 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 
 	const isThematicReceipt = layout.id.startsWith('thematic-receipt') || (layout as any).mode === 'thematic';
 
-	// Physical print receipt is taller (3900px) to accommodate the download QR code.
-	// Digital asset receipt is standard height (3456px) without the QR code.
-	const effectiveCanvasHeight = (isThematicReceipt && options.isForPrint) ? 3900 : layout.canvasHeight;
+	// Physical print receipt is taller (4020px) to accommodate the download QR code.
+	// Digital asset receipt is standard height (3620px) without the QR code.
+	const effectiveCanvasHeight = (isThematicReceipt && options.isForPrint) ? 4020 : (isThematicReceipt ? 3620 : layout.canvasHeight);
 
 	const canvas = document.createElement('canvas');
 	canvas.width = layout.canvasWidth;
@@ -258,15 +258,15 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		}
 	}
 
-	// 1. Draw Background
+	// 1. Draw Background (guaranteed fill full effective height with solid white to eliminate thermal printer black box)
 	ctx.fillStyle = layout.backgroundColor || '#FFFFFF';
-	ctx.fillRect(0, 0, layout.canvasWidth, layout.canvasHeight);
+	ctx.fillRect(0, 0, layout.canvasWidth, effectiveCanvasHeight);
 
 	// If there is a background image overlay
 	if (layout.backgroundUrl) {
 		try {
 			const bgImg = await loadImage(layout.backgroundUrl);
-			ctx.drawImage(bgImg, 0, 0, layout.canvasWidth, layout.canvasHeight);
+			ctx.drawImage(bgImg, 0, 0, layout.canvasWidth, effectiveCanvasHeight);
 		} catch (e) {
 			console.warn('Failed to load background template image', e);
 		}
@@ -283,25 +283,25 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		const marginX = 54;
 		const endX = layout.canvasWidth - marginX;
 
-		// 2a. Store Header
-		ctx.font = '900 50px "Outfit", "Arial Black", sans-serif';
+		// 2a. Store Header (Enlarged for 58mm thermal print readability)
+		ctx.font = '900 64px "Outfit", "Arial Black", sans-serif';
 		ctx.letterSpacing = '3px';
-		ctx.fillText(`*** ${(brandingTitle || 'CHEKIYUUME').toUpperCase()} MART ★ ***`, centerX, 35);
+		ctx.fillText(`*** ${(brandingTitle || 'CHEKIYUUME').toUpperCase()} MART ★ ***`, centerX, 28);
 
-		ctx.font = '700 24px "Courier New", Courier, monospace';
+		ctx.font = '700 32px "Courier New", Courier, monospace';
 		ctx.letterSpacing = '2px';
 		ctx.fillStyle = '#222222';
-		ctx.fillText(`*** CONVENIENCE & PHOTO STUDIO ***`, centerX, 92);
+		ctx.fillText(`*** CONVENIENCE & PHOTO STUDIO ***`, centerX, 96);
 
-		ctx.font = '700 22px "Courier New", Courier, monospace';
+		ctx.font = '700 28px "Courier New", Courier, monospace';
 		ctx.letterSpacing = '1px';
 		ctx.fillStyle = '#333333';
-		ctx.fillText(`STORE #0397 • SHIMOKITA BRANCH`, centerX, 124);
+		ctx.fillText(`STORE #0397 • SHIMOKITA BRANCH`, centerX, 136);
 
 		// Double Divider
-		drawReceiptDivider(ctx, marginX, endX, 160, 'double');
+		drawReceiptDivider(ctx, marginX, endX, 175, 'double');
 
-		// 2b. Info Rows (monospaced receipt style)
+		// 2b. Info Rows (monospaced receipt style - 32px bold)
 		const now = new Date();
 		const dateStr = now.toLocaleDateString('id-ID', {
 			day: '2-digit',
@@ -316,27 +316,27 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		const transCode = (sessionId ? sessionId.slice(-8) : '4812-9YMC').toUpperCase();
 
 		ctx.textAlign = 'left';
-		ctx.font = '700 24px "Courier New", Courier, monospace';
+		ctx.font = '700 32px "Courier New", Courier, monospace';
 		ctx.fillStyle = '#111111';
-		ctx.fillText(`DATE : ${dateStr} ${timeStr}`, marginX + 15, 180);
-		ctx.fillText(`TRANS: #TR-${transCode}`, marginX + 15, 218);
-		ctx.fillText(`CASHR: ${(guestName ? guestName.toUpperCase() : 'BESTIE').slice(0, 16)}`, marginX + 15, 256);
+		ctx.fillText(`DATE : ${dateStr} ${timeStr}`, marginX + 15, 192);
+		ctx.fillText(`TRANS: #TR-${transCode}`, marginX + 15, 230);
+		ctx.fillText(`CASHR: ${(guestName ? guestName.toUpperCase() : 'BESTIE').slice(0, 14)}`, marginX + 15, 268);
 
 		ctx.textAlign = 'right';
-		ctx.fillText(`POS  : #01`, endX - 15, 180);
-		ctx.fillText(`REG  : MEMORY`, endX - 15, 218);
-		ctx.fillText(`ITEMS: 3 CUTS`, endX - 15, 256);
+		ctx.fillText(`POS  : #01`, endX - 15, 192);
+		ctx.fillText(`REG  : MEMORY`, endX - 15, 230);
+		ctx.fillText(`ITEMS: 3 CUTS`, endX - 15, 268);
 
 		// Double Divider
-		drawReceiptDivider(ctx, marginX, endX, 295, 'double');
+		drawReceiptDivider(ctx, marginX, endX, 310, 'double');
 
 		// 2c. Section Header
 		ctx.textAlign = 'center';
-		ctx.font = '700 24px "Courier New", Courier, monospace';
+		ctx.font = '700 30px "Courier New", Courier, monospace';
 		ctx.letterSpacing = '1px';
-		ctx.fillText(`=== GROCERY ITEM : PHOTOSTRIP ===`, centerX, 315);
+		ctx.fillText(`=== GROCERY ITEM : PHOTOSTRIP ===`, centerX, 325);
 
-		drawReceiptDivider(ctx, marginX, endX, 350, 'solid');
+		drawReceiptDivider(ctx, marginX, endX, 365, 'solid');
 
 		ctx.restore();
 	}
@@ -412,19 +412,20 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		if (isThematicReceipt) {
 			ctx.save();
 			// Crisp solid border
+			// Crisp solid border
 			ctx.strokeStyle = '#111111';
-			ctx.lineWidth = 3.5;
+			ctx.lineWidth = 4;
 			ctx.strokeRect(slot.x, slot.y, slot.width, slot.height);
 
-			// Decorative slot item tag
+			// Decorative slot item tag (Enlarged)
 			const slotBadge = i === 0 ? 'ITEM #01 [SNAP]' : i === 1 ? 'ITEM #02 [BEST POSE]' : 'ITEM #03 [MEMORIES]';
-			ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-			ctx.fillRect(slot.x + 14, slot.y + 14, 210, 32);
+			ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+			ctx.fillRect(slot.x + 14, slot.y + 14, 250, 40);
 			ctx.fillStyle = '#FFFFFF';
-			ctx.font = '700 16px "Courier New", Courier, monospace';
+			ctx.font = '700 22px "Courier New", Courier, monospace';
 			ctx.textAlign = 'left';
 			ctx.textBaseline = 'middle';
-			ctx.fillText(slotBadge, slot.x + 24, slot.y + 30);
+			ctx.fillText(slotBadge, slot.x + 24, slot.y + 34);
 			ctx.restore();
 		}
 	}
@@ -460,8 +461,7 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 	// 6. Draw Footer / Branding Area
 	if (isThematicReceipt) {
 		ctx.save();
-		const effectiveFooterHeight = options.isForPrint ? 1260 : (layout.footerHeight || 816);
-		const footerTop = effectiveCanvasHeight - effectiveFooterHeight;
+		const footerTop = 2560;
 		const centerX = layout.canvasWidth / 2;
 		const marginX = 54;
 		const endX = layout.canvasWidth - marginX;
@@ -474,100 +474,102 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 			year: 'numeric'
 		}).toUpperCase();
 
+		ctx.save();
+		ctx.textBaseline = 'top';
+
 		// Top double divider of grocery table
-		drawReceiptDivider(ctx, marginX, endX, footerTop + 20, 'double');
+		drawReceiptDivider(ctx, marginX, endX, footerTop + 15, 'double');
 
 		// Table Header Title
 		ctx.textAlign = 'center';
-		ctx.textBaseline = 'top';
 		ctx.fillStyle = '#111111';
-		ctx.font = '700 26px "Courier New", Courier, monospace';
+		ctx.font = '800 36px "Courier New", Courier, monospace';
 		ctx.letterSpacing = '1px';
-		ctx.fillText(`=== GROCERY ITEMS ===`, centerX, footerTop + 35);
+		ctx.fillText(`=== GROCERY ITEMS ===`, centerX, footerTop + 32);
 
-		// Column Header
+		// Column Header (2-column layout: ITEM DESCRIPTION & TOTAL)
 		ctx.textAlign = 'left';
-		ctx.font = '700 24px "Courier New", Courier, monospace';
-		ctx.fillText(`ITEM DESCRIPTION`, marginX + 15, footerTop + 75);
+		ctx.font = '700 34px "Courier New", Courier, monospace';
+		ctx.fillText(`ITEM DESCRIPTION`, marginX + 15, footerTop + 78);
 		ctx.textAlign = 'right';
-		ctx.fillText(`QTY   PRICE`, endX - 15, footerTop + 75);
+		ctx.fillText(`TOTAL`, endX - 15, footerTop + 78);
 
 		// Divider
-		drawReceiptDivider(ctx, marginX, endX, footerTop + 108, 'solid');
+		drawReceiptDivider(ctx, marginX, endX, footerTop + 118, 'solid');
 
-		// Grocery Items
+		// Grocery Items (Clean 2-column format)
 		const items = [
-			{ name: '3X PHOTOSTRIP MOMENTS', qty: '01', price: 'PRICELESS' },
-			{ name: '01X BTS LIVE VIDEO', qty: '01', price: 'FREE' },
-			{ name: 'UNLIMITED SWEET SMILES', qty: '01', price: 'Rp 0' },
-			{ name: 'GOOD VIBES ONLY', qty: '01', price: 'Rp 0' }
+			{ name: '3X PHOTOSTRIP MOMENTS', price: 'PRICELESS' },
+			{ name: '01X BTS LIVE VIDEO', price: 'FREE' },
+			{ name: 'UNLIMITED SWEET SMILES', price: 'Rp 0' },
+			{ name: 'GOOD VIBES ONLY', price: 'Rp 0' }
 		];
 
-		ctx.font = '600 24px "Courier New", Courier, monospace';
-		let itemY = footerTop + 125;
+		ctx.font = '700 34px "Courier New", Courier, monospace';
+		let itemY = footerTop + 135;
 		items.forEach((it) => {
 			ctx.textAlign = 'left';
 			ctx.fillStyle = '#111111';
 			ctx.fillText(it.name, marginX + 15, itemY);
 			ctx.textAlign = 'right';
-			ctx.fillText(`${it.qty}  ${it.price}`, endX - 15, itemY);
-			itemY += 35;
+			ctx.fillText(it.price, endX - 15, itemY);
+			itemY += 48;
 		});
 
 		// Divider
-		drawReceiptDivider(ctx, marginX, endX, itemY + 8, 'solid');
+		drawReceiptDivider(ctx, marginX, endX, itemY + 10, 'solid');
 
 		// Subtotal & Discount
-		ctx.font = '600 24px "Courier New", Courier, monospace';
+		ctx.font = '700 32px "Courier New", Courier, monospace';
 		ctx.textAlign = 'left';
-		ctx.fillText(`SUBTOTAL`, marginX + 15, itemY + 22);
+		ctx.fillText(`SUBTOTAL`, marginX + 15, itemY + 26);
 		ctx.textAlign = 'right';
-		ctx.fillText(`Rp 0`, endX - 15, itemY + 22);
+		ctx.fillText(`Rp 0`, endX - 15, itemY + 26);
 
 		ctx.textAlign = 'left';
-		ctx.fillText(`DISCOUNT BESTIE (100%)`, marginX + 15, itemY + 54);
+		ctx.fillText(`DISCOUNT BESTIE (100%)`, marginX + 15, itemY + 66);
 		ctx.textAlign = 'right';
-		ctx.fillText(`-Rp 0`, endX - 15, itemY + 54);
+		ctx.fillText(`-Rp 0`, endX - 15, itemY + 66);
 
 		// Double separator
-		drawReceiptDivider(ctx, marginX, endX, itemY + 92, 'double');
+		drawReceiptDivider(ctx, marginX, endX, itemY + 112, 'double');
 
 		// Total line
 		ctx.textAlign = 'left';
-		ctx.font = '900 30px "Outfit", "Courier New", monospace';
+		ctx.font = '900 46px "Outfit", "Courier New", monospace';
 		ctx.fillStyle = '#111111';
-		ctx.fillText(`TOTAL HAPPINESS`, marginX + 15, itemY + 110);
+		ctx.fillText(`TOTAL HAPPINESS`, marginX + 15, itemY + 130);
 		ctx.textAlign = 'right';
-		ctx.fillText(`PRICELESS`, endX - 15, itemY + 110);
+		ctx.fillText(`PRICELESS`, endX - 15, itemY + 130);
 
 		ctx.textAlign = 'left';
-		ctx.font = '700 22px "Courier New", Courier, monospace';
-		ctx.fillText(`PAYMENT : CASH OF MEMORIES`, marginX + 15, itemY + 148);
+		ctx.font = '700 32px "Courier New", Courier, monospace';
+		ctx.fillText(`PAYMENT : CASH OF MEMORIES`, marginX + 15, itemY + 188);
 
 		// Stamp PAID (stamped over right side)
-		drawReceiptStamp(ctx, centerX + 260, itemY + 130, dateStr);
+		drawReceiptStamp(ctx, centerX + 260, itemY + 170, dateStr);
 
 		if (options.isForPrint) {
 			// ========================================================
 			// PHYSICAL PRINT MODE: Includes Scannable Download QR Code
 			// ========================================================
-			const qrSectionY = itemY + 185;
+			const qrSectionY = itemY + 235;
 			drawReceiptDivider(ctx, marginX, endX, qrSectionY, 'double');
 
-			// QR Code Section
+			// QR Code Section Headers
 			ctx.textAlign = 'center';
-			ctx.font = '800 24px "Courier New", Courier, monospace';
+			ctx.font = '800 32px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
-			ctx.fillText('SCAN TO DOWNLOAD DIGITAL PHOTO & VIDEO', centerX, qrSectionY + 20);
+			ctx.fillText('SCAN TO DOWNLOAD DIGITAL PHOTO & VIDEO', centerX, qrSectionY + 25);
 
-			ctx.font = '600 18px "Courier New", Courier, monospace';
-			ctx.fillStyle = '#444444';
-			ctx.fillText('* HIGH-RES DIGITAL ASSETS • CLOUD SYNC *', centerX, qrSectionY + 52);
+			ctx.font = '700 24px "Courier New", Courier, monospace';
+			ctx.fillStyle = '#333333';
+			ctx.fillText('* HIGH-RES DIGITAL ASSETS • CLOUD SYNC *', centerX, qrSectionY + 65);
 
 			// Draw QR Code centered (260x260)
 			const qrSize = 260;
 			const qrX = centerX - qrSize / 2;
-			const qrY = qrSectionY + 85;
+			const qrY = qrSectionY + 105;
 
 			if (qrCanvas) {
 				ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
@@ -577,92 +579,101 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 				ctx.fillStyle = '#ffffff';
 				ctx.fillRect(qrX, qrY, qrSize, qrSize);
 				ctx.strokeStyle = '#111111';
-				ctx.lineWidth = 3;
+				ctx.lineWidth = 4;
 				ctx.strokeRect(qrX, qrY, qrSize, qrSize);
 				ctx.fillStyle = '#111111';
-				ctx.font = 'bold 18px monospace';
-				ctx.fillText('CHEKIYUUME QR', centerX, qrY + 115);
+				ctx.font = 'bold 22px monospace';
+				ctx.fillText('CHEKIYUUME QR', centerX, qrY + 125);
 				ctx.restore();
 			}
 
 			// Order / Session ID snippet below QR
-			const transNoticeY = qrY + qrSize + 18;
-			ctx.font = '700 22px "Courier New", Courier, monospace';
+			const transNoticeY = qrY + qrSize + 22;
+			ctx.font = '700 26px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
 			ctx.fillText(`* TR-${transCode} • EXPIRES IN 48 HOURS *`, centerX, transNoticeY);
 
 			// Barcode Section
-			const barcodeY = transNoticeY + 45;
-			drawBarcode(ctx, centerX, barcodeY, 680, 75, sessionId);
+			const barcodeSectionY = transNoticeY + 45;
+			drawReceiptDivider(ctx, marginX, endX, barcodeSectionY, 'double');
 
-			const barcodeNumY = barcodeY + 85;
-			ctx.font = '700 22px "Courier New", Courier, monospace';
+			const barcodeY = barcodeSectionY + 30;
+			drawBarcode(ctx, centerX, barcodeY, 720, 85, sessionId);
+
+			const barcodeNumY = barcodeY + 95;
+			ctx.font = '700 28px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#222222';
 			ctx.fillText(`4  9 0 1 2 3 4   5 6 7 8 9 0      TRAN# ${transCode}`, centerX, barcodeNumY);
 
 			// Store Policy Divider
-			const policyY = barcodeNumY + 38;
+			const policyY = barcodeNumY + 45;
 			drawReceiptDivider(ctx, marginX, endX, policyY, 'solid');
 
 			// Store Policy Note
-			ctx.font = '700 22px "Courier New", Courier, monospace';
+			ctx.font = '700 30px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
-			ctx.fillText('"Kenangan yang sudah dibeli tidak dapat', centerX, policyY + 22);
-			ctx.fillText('ditukar atau dilupakan seumur hidup!"', centerX, policyY + 50);
+			ctx.fillText('"Kenangan yang sudah dibeli tidak dapat', centerX, policyY + 24);
+			ctx.fillText('ditukar atau dilupakan seumur hidup!"', centerX, policyY + 60);
 
 			// Thank You Note & Recyclable Thermal note
-			ctx.font = '900 26px "Outfit", "Courier New", sans-serif';
-			ctx.letterSpacing = '2px';
-			ctx.fillText(`*** THANK YOU FOR VISITING! SEE YOU SOON ***`, centerX, policyY + 95);
+			const thankYouY = policyY + 105;
+			drawReceiptDivider(ctx, marginX, endX, thankYouY, 'solid');
 
-			ctx.font = '700 18px "Courier New", Courier, monospace';
+			ctx.font = '900 34px "Outfit", "Courier New", sans-serif';
+			ctx.letterSpacing = '2px';
+			ctx.fillText(`*** THANK YOU FOR VISITING! SEE YOU SOON ***`, centerX, thankYouY + 24);
+
+			ctx.font = '700 24px "Courier New", Courier, monospace';
 			ctx.letterSpacing = '1px';
 			ctx.fillStyle = '#444444';
-			ctx.fillText(`* 100% RECYCLABLE THERMAL PAPER *`, centerX, policyY + 130);
+			ctx.fillText(`* 100% RECYCLABLE THERMAL PAPER *`, centerX, thankYouY + 68);
 
-			ctx.font = '800 22px "Courier New", Courier, monospace';
+			ctx.font = '800 28px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
-			ctx.fillText(`IG: @CHEKIYUUME • WWW.CHEKIYUUME.COM`, centerX, policyY + 158);
+			ctx.fillText(`IG: @CHEKIYUUME • WWW.CHEKIYUUME.COM`, centerX, thankYouY + 106);
 		} else {
 			// ========================================================
 			// DIGITAL ASSET MODE: Privacy-Safe Barcode (NO QR CODE)
 			// ========================================================
-			const barcodeSectionY = itemY + 185;
+			const barcodeSectionY = itemY + 235;
 			drawReceiptDivider(ctx, marginX, endX, barcodeSectionY, 'double');
 
 			// Barcode Section
-			const barcodeY = barcodeSectionY + 25;
-			drawBarcode(ctx, centerX, barcodeY, 680, 80, sessionId);
+			const barcodeY = barcodeSectionY + 30;
+			drawBarcode(ctx, centerX, barcodeY, 720, 85, sessionId);
 
-			const barcodeNumY = barcodeY + 90;
+			const barcodeNumY = barcodeY + 95;
 			ctx.textAlign = 'center';
-			ctx.font = '700 22px "Courier New", Courier, monospace';
+			ctx.font = '700 28px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#222222';
 			ctx.fillText(`4  9 0 1 2 3 4   5 6 7 8 9 0      TRAN# ${transCode}`, centerX, barcodeNumY);
 
 			// Store Policy Divider
-			const policyY = barcodeNumY + 38;
+			const policyY = barcodeNumY + 45;
 			drawReceiptDivider(ctx, marginX, endX, policyY, 'solid');
 
 			// Store Policy Note
-			ctx.font = '700 22px "Courier New", Courier, monospace';
+			ctx.font = '700 30px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
-			ctx.fillText('"Kenangan yang sudah dibeli tidak dapat', centerX, policyY + 22);
-			ctx.fillText('ditukar atau dilupakan seumur hidup!"', centerX, policyY + 50);
+			ctx.fillText('"Kenangan yang sudah dibeli tidak dapat', centerX, policyY + 24);
+			ctx.fillText('ditukar atau dilupakan seumur hidup!"', centerX, policyY + 60);
 
 			// Thank You Note & Recyclable Thermal note
-			ctx.font = '900 26px "Outfit", "Courier New", sans-serif';
-			ctx.letterSpacing = '2px';
-			ctx.fillText(`*** THANK YOU FOR VISITING! SEE YOU SOON ***`, centerX, policyY + 95);
+			const thankYouY = policyY + 105;
+			drawReceiptDivider(ctx, marginX, endX, thankYouY, 'solid');
 
-			ctx.font = '700 18px "Courier New", Courier, monospace';
+			ctx.font = '900 34px "Outfit", "Courier New", sans-serif';
+			ctx.letterSpacing = '2px';
+			ctx.fillText(`*** THANK YOU FOR VISITING! SEE YOU SOON ***`, centerX, thankYouY + 24);
+
+			ctx.font = '700 24px "Courier New", Courier, monospace';
 			ctx.letterSpacing = '1px';
 			ctx.fillStyle = '#444444';
-			ctx.fillText(`* 100% RECYCLABLE THERMAL PAPER *`, centerX, policyY + 130);
+			ctx.fillText(`* 100% RECYCLABLE THERMAL PAPER *`, centerX, thankYouY + 68);
 
-			ctx.font = '800 22px "Courier New", Courier, monospace';
+			ctx.font = '800 28px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
-			ctx.fillText(`IG: @CHEKIYUUME • WWW.CHEKIYUUME.COM`, centerX, policyY + 158);
+			ctx.fillText(`IG: @CHEKIYUUME • WWW.CHEKIYUUME.COM`, centerX, thankYouY + 106);
 		}
 
 		ctx.restore();
