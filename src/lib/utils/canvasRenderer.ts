@@ -257,21 +257,25 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		showTimestamp = true
 	} = options;
 
+	const isThematicReceipt = layout.id.startsWith('thematic-receipt') || (layout as any).mode === 'thematic';
+
+	// Physical print receipt is taller (3900px) to accommodate the download QR code.
+	// Digital asset receipt is standard height (3456px) without the QR code.
+	const effectiveCanvasHeight = (isThematicReceipt && options.isForPrint) ? 3900 : layout.canvasHeight;
+
 	const canvas = document.createElement('canvas');
 	canvas.width = layout.canvasWidth;
-	canvas.height = layout.canvasHeight;
+	canvas.height = effectiveCanvasHeight;
 	const ctx = canvas.getContext('2d', { alpha: false });
 
 	if (!ctx) {
 		throw new Error('Canvas 2D context creation failed');
 	}
 
-	const isThematicReceipt = layout.id.startsWith('thematic-receipt') || (layout as any).mode === 'thematic';
-
 	let qrCanvas: HTMLCanvasElement | null = null;
 	let qrError: string | null = null;
-	if (isThematicReceipt) {
-		recordPrintLog(`[canvasRenderer] Preparing receipt QR: layout=${layout.id}, sessionId=${sessionId || 'NONE'}`);
+	if (isThematicReceipt && options.isForPrint) {
+		recordPrintLog(`[canvasRenderer] Preparing print QR: layout=${layout.id}, sessionId=${sessionId || 'NONE'}`);
 		const targetShareUrl = options.shareUrl || (
 			sessionId
 				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `https://chekiyuume.app/share/${sessionId}`)
@@ -532,7 +536,8 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 	// 6. Draw Footer / Branding Area
 	if (isThematicReceipt) {
 		ctx.save();
-		const footerTop = layout.canvasHeight - layout.footerHeight;
+		const effectiveFooterHeight = options.isForPrint ? 1260 : (layout.footerHeight || 816);
+		const footerTop = effectiveCanvasHeight - effectiveFooterHeight;
 		const centerX = layout.canvasWidth / 2;
 		const marginX = 54;
 		const endX = layout.canvasWidth - marginX;
@@ -618,79 +623,123 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		// Stamp PAID (stamped over right side)
 		drawReceiptStamp(ctx, centerX + 260, itemY + 130, dateStr);
 
-		// Double Divider before QR
-		const qrSectionY = itemY + 185;
-		drawReceiptDivider(ctx, marginX, endX, qrSectionY, 'double');
+		if (options.isForPrint) {
+			// ========================================================
+			// PHYSICAL PRINT MODE: Includes Scannable Download QR Code
+			// ========================================================
+			const qrSectionY = itemY + 185;
+			drawReceiptDivider(ctx, marginX, endX, qrSectionY, 'double');
 
-		// QR Code Section
-		ctx.textAlign = 'center';
-		ctx.font = '800 24px "Courier New", Courier, monospace';
-		ctx.fillStyle = '#111111';
-		ctx.fillText('SCAN TO DOWNLOAD DIGITAL PHOTO & VIDEO', centerX, qrSectionY + 20);
-
-		ctx.font = '600 18px "Courier New", Courier, monospace';
-		ctx.fillStyle = '#444444';
-		ctx.fillText('* HIGH-RES DIGITAL ASSETS • CLOUD SYNC *', centerX, qrSectionY + 52);
-
-		// Draw QR Code centered (260x260)
-		const qrSize = 260;
-		const qrX = centerX - qrSize / 2;
-		const qrY = qrSectionY + 85;
-
-		if (qrCanvas) {
-			ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
-		} else {
-			// Visual fallback
-			ctx.save();
-			ctx.fillStyle = '#ffffff';
-			ctx.fillRect(qrX, qrY, qrSize, qrSize);
-			ctx.strokeStyle = '#111111';
-			ctx.lineWidth = 3;
-			ctx.strokeRect(qrX, qrY, qrSize, qrSize);
+			// QR Code Section
+			ctx.textAlign = 'center';
+			ctx.font = '800 24px "Courier New", Courier, monospace';
 			ctx.fillStyle = '#111111';
-			ctx.font = 'bold 18px monospace';
-			ctx.fillText('CHEKIYUUME QR', centerX, qrY + 115);
-			ctx.restore();
+			ctx.fillText('SCAN TO DOWNLOAD DIGITAL PHOTO & VIDEO', centerX, qrSectionY + 20);
+
+			ctx.font = '600 18px "Courier New", Courier, monospace';
+			ctx.fillStyle = '#444444';
+			ctx.fillText('* HIGH-RES DIGITAL ASSETS • CLOUD SYNC *', centerX, qrSectionY + 52);
+
+			// Draw QR Code centered (260x260)
+			const qrSize = 260;
+			const qrX = centerX - qrSize / 2;
+			const qrY = qrSectionY + 85;
+
+			if (qrCanvas) {
+				ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+			} else {
+				// Visual fallback
+				ctx.save();
+				ctx.fillStyle = '#ffffff';
+				ctx.fillRect(qrX, qrY, qrSize, qrSize);
+				ctx.strokeStyle = '#111111';
+				ctx.lineWidth = 3;
+				ctx.strokeRect(qrX, qrY, qrSize, qrSize);
+				ctx.fillStyle = '#111111';
+				ctx.font = 'bold 18px monospace';
+				ctx.fillText('CHEKIYUUME QR', centerX, qrY + 115);
+				ctx.restore();
+			}
+
+			// Order / Session ID snippet below QR
+			const transNoticeY = qrY + qrSize + 18;
+			ctx.font = '700 22px "Courier New", Courier, monospace';
+			ctx.fillStyle = '#111111';
+			ctx.fillText(`* TR-${transCode} • EXPIRES IN 48 HOURS *`, centerX, transNoticeY);
+
+			// Barcode Section
+			const barcodeY = transNoticeY + 45;
+			drawBarcode(ctx, centerX, barcodeY, 680, 75, sessionId);
+
+			const barcodeNumY = barcodeY + 85;
+			ctx.font = '700 22px "Courier New", Courier, monospace';
+			ctx.fillStyle = '#222222';
+			ctx.fillText(`4  9 0 1 2 3 4   5 6 7 8 9 0      TRAN# ${transCode}`, centerX, barcodeNumY);
+
+			// Store Policy Divider
+			const policyY = barcodeNumY + 38;
+			drawReceiptDivider(ctx, marginX, endX, policyY, 'solid');
+
+			// Store Policy Note
+			ctx.font = '700 22px "Courier New", Courier, monospace';
+			ctx.fillStyle = '#111111';
+			ctx.fillText('"Kenangan yang sudah dibeli tidak dapat', centerX, policyY + 22);
+			ctx.fillText('ditukar atau dilupakan seumur hidup!"', centerX, policyY + 50);
+
+			// Thank You Note & Recyclable Thermal note
+			ctx.font = '900 26px "Outfit", "Courier New", sans-serif';
+			ctx.letterSpacing = '2px';
+			ctx.fillText(`*** THANK YOU FOR VISITING! SEE YOU SOON ***`, centerX, policyY + 95);
+
+			ctx.font = '700 18px "Courier New", Courier, monospace';
+			ctx.letterSpacing = '1px';
+			ctx.fillStyle = '#444444';
+			ctx.fillText(`* 100% RECYCLABLE THERMAL PAPER *`, centerX, policyY + 130);
+
+			ctx.font = '800 22px "Courier New", Courier, monospace';
+			ctx.fillStyle = '#111111';
+			ctx.fillText(`IG: @CHEKIYUUME • WWW.CHEKIYUUME.COM`, centerX, policyY + 158);
+		} else {
+			// ========================================================
+			// DIGITAL ASSET MODE: Privacy-Safe Barcode (NO QR CODE)
+			// ========================================================
+			const barcodeSectionY = itemY + 185;
+			drawReceiptDivider(ctx, marginX, endX, barcodeSectionY, 'double');
+
+			// Barcode Section
+			const barcodeY = barcodeSectionY + 25;
+			drawBarcode(ctx, centerX, barcodeY, 680, 80, sessionId);
+
+			const barcodeNumY = barcodeY + 90;
+			ctx.textAlign = 'center';
+			ctx.font = '700 22px "Courier New", Courier, monospace';
+			ctx.fillStyle = '#222222';
+			ctx.fillText(`4  9 0 1 2 3 4   5 6 7 8 9 0      TRAN# ${transCode}`, centerX, barcodeNumY);
+
+			// Store Policy Divider
+			const policyY = barcodeNumY + 38;
+			drawReceiptDivider(ctx, marginX, endX, policyY, 'solid');
+
+			// Store Policy Note
+			ctx.font = '700 22px "Courier New", Courier, monospace';
+			ctx.fillStyle = '#111111';
+			ctx.fillText('"Kenangan yang sudah dibeli tidak dapat', centerX, policyY + 22);
+			ctx.fillText('ditukar atau dilupakan seumur hidup!"', centerX, policyY + 50);
+
+			// Thank You Note & Recyclable Thermal note
+			ctx.font = '900 26px "Outfit", "Courier New", sans-serif';
+			ctx.letterSpacing = '2px';
+			ctx.fillText(`*** THANK YOU FOR VISITING! SEE YOU SOON ***`, centerX, policyY + 95);
+
+			ctx.font = '700 18px "Courier New", Courier, monospace';
+			ctx.letterSpacing = '1px';
+			ctx.fillStyle = '#444444';
+			ctx.fillText(`* 100% RECYCLABLE THERMAL PAPER *`, centerX, policyY + 130);
+
+			ctx.font = '800 22px "Courier New", Courier, monospace';
+			ctx.fillStyle = '#111111';
+			ctx.fillText(`IG: @CHEKIYUUME • WWW.CHEKIYUUME.COM`, centerX, policyY + 158);
 		}
-
-		// Order / Session ID snippet below QR
-		const transNoticeY = qrY + qrSize + 18;
-		ctx.font = '700 22px "Courier New", Courier, monospace';
-		ctx.fillStyle = '#111111';
-		ctx.fillText(`* TR-${transCode} • EXPIRES IN 48 HOURS *`, centerX, transNoticeY);
-
-		// Barcode Section
-		const barcodeY = transNoticeY + 45;
-		drawBarcode(ctx, centerX, barcodeY, 680, 75, sessionId);
-
-		const barcodeNumY = barcodeY + 85;
-		ctx.font = '700 22px "Courier New", Courier, monospace';
-		ctx.fillStyle = '#222222';
-		ctx.fillText(`4  9 0 1 2 3 4   5 6 7 8 9 0      TRAN# ${transCode}`, centerX, barcodeNumY);
-
-		// Store Policy Divider
-		const policyY = barcodeNumY + 38;
-		drawReceiptDivider(ctx, marginX, endX, policyY, 'solid');
-
-		// Store Policy Note
-		ctx.font = '700 22px "Courier New", Courier, monospace';
-		ctx.fillStyle = '#111111';
-		ctx.fillText('"Kenangan yang sudah dibeli tidak dapat', centerX, policyY + 22);
-		ctx.fillText('ditukar atau dilupakan seumur hidup!"', centerX, policyY + 50);
-
-		// Thank You Note & Recyclable Thermal note
-		ctx.font = '900 26px "Outfit", "Courier New", sans-serif';
-		ctx.letterSpacing = '2px';
-		ctx.fillText(`*** THANK YOU FOR VISITING! SEE YOU SOON ***`, centerX, policyY + 95);
-
-		ctx.font = '700 18px "Courier New", Courier, monospace';
-		ctx.letterSpacing = '1px';
-		ctx.fillStyle = '#444444';
-		ctx.fillText(`* 100% RECYCLABLE THERMAL PAPER *`, centerX, policyY + 130);
-
-		ctx.font = '800 22px "Courier New", Courier, monospace';
-		ctx.fillStyle = '#111111';
-		ctx.fillText(`IG: @CHEKIYUUME • WWW.CHEKIYUUME.COM`, centerX, policyY + 158);
 
 		ctx.restore();
 	} else if (!layout.id.startsWith('default-') && !layout.overlayUrl) {
