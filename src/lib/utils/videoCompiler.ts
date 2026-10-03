@@ -179,7 +179,7 @@ function drawReceiptDivider(
 	ctx.save();
 	ctx.strokeStyle = '#111111';
 	if (style === 'double') {
-		ctx.lineWidth = 4;
+		ctx.lineWidth = 4.5;
 		ctx.beginPath();
 		ctx.moveTo(startX, y - 4);
 		ctx.lineTo(endX, y - 4);
@@ -189,14 +189,14 @@ function drawReceiptDivider(
 		ctx.lineTo(endX, y + 4);
 		ctx.stroke();
 	} else if (style === 'dash') {
-		ctx.lineWidth = 4;
-		ctx.setLineDash([16, 12]);
+		ctx.lineWidth = 4.5;
+		ctx.setLineDash([18, 12]);
 		ctx.beginPath();
 		ctx.moveTo(startX, y);
 		ctx.lineTo(endX, y);
 		ctx.stroke();
 	} else {
-		ctx.lineWidth = 4;
+		ctx.lineWidth = 4.5;
 		ctx.beginPath();
 		ctx.moveTo(startX, y);
 		ctx.lineTo(endX, y);
@@ -285,42 +285,42 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 		const marginX = 54;
 		const endX = origWidth - marginX;
 
-		// 2a. Store Branding (Pure monospace, bold & large)
-		ctx.font = '800 80px "Courier New", Courier, monospace';
-		ctx.letterSpacing = '2px';
-		ctx.fillText((brandingTitle || 'CHEKIYUUME').toUpperCase(), centerX, 40);
+		// 2a. Store Branding (Extra-large bold monospace)
+		ctx.font = '800 100px "Courier New", Courier, monospace';
+		ctx.letterSpacing = '3px';
+		ctx.fillText((brandingTitle || 'CHEKIYUUME').toUpperCase(), centerX, 45);
 
-		ctx.font = '700 38px "Courier New", Courier, monospace';
+		ctx.font = '700 48px "Courier New", Courier, monospace';
 		ctx.letterSpacing = '1px';
 		ctx.fillStyle = '#222222';
-		ctx.fillText((brandingSubtitle || 'PHOTOBOOTH STUDIO').toUpperCase(), centerX, 130);
+		ctx.fillText((brandingSubtitle || 'PHOTOBOOTH STUDIO').toUpperCase(), centerX, 160);
 
 		// Single Dash Divider
-		drawReceiptDivider(ctx, marginX, endX, 185, 'dash');
+		drawReceiptDivider(ctx, marginX, endX, 230, 'dash');
 
 		const transCode = (sessionId ? sessionId.slice(-8) : 'R095UJLG').toUpperCase();
 
-		ctx.font = '700 42px "Courier New", Courier, monospace';
+		ctx.font = '700 54px "Courier New", Courier, monospace';
 		ctx.fillStyle = '#111111';
 
-		// Row 1
+		// Row 1: Date & Time
 		ctx.textAlign = 'left';
-		ctx.fillText(`DATE : ${dateStr} ${timeStr}`, marginX + 15, 205);
-		ctx.textAlign = 'right';
-		ctx.fillText(`POS : #01`, endX - 15, 205);
+		ctx.fillText(`DATE : ${dateStr} ${timeStr}`, marginX + 15, 255);
 
-		// Row 2
-		ctx.textAlign = 'left';
-		ctx.fillText(`ORDER: #TR-${transCode}`, marginX + 15, 260);
-		ctx.textAlign = 'right';
-		ctx.fillText(`CUTS: 3`, endX - 15, 260);
+		// Row 2: Order
+		ctx.fillText(`ORDER: #TR-${transCode}`, marginX + 15, 325);
 
-		// Row 3
+		// Row 3: POS & Cuts
+		ctx.fillText(`POS  : #01`, marginX + 15, 395);
+		ctx.textAlign = 'right';
+		ctx.fillText(`CUTS : 3`, endX - 15, 395);
+
+		// Row 4: Guest
 		ctx.textAlign = 'left';
-		ctx.fillText(`GUEST: ${(guestName ? guestName.toUpperCase() : 'FRIEND').slice(0, 16)}`, marginX + 15, 315);
+		ctx.fillText(`GUEST: ${(guestName ? guestName.toUpperCase() : 'FRIEND').slice(0, 14)}`, marginX + 15, 465);
 
 		// Divider before photos
-		drawReceiptDivider(ctx, marginX, endX, 375, 'dash');
+		drawReceiptDivider(ctx, marginX, endX, 545, 'dash');
 
 		ctx.restore();
 	}
@@ -369,7 +369,7 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 	}
 
 	if (isThematicReceipt) {
-		const footerTop = 2750;
+		const footerTop = 2930;
 		const centerX = origWidth / 2;
 		const marginX = 54;
 		const endX = origWidth - marginX;
@@ -382,19 +382,19 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 		drawReceiptDivider(ctx, marginX, endX, footerTop, 'dash');
 
 		// Column Header (ITEM & QTY)
-		ctx.font = '700 44px "Courier New", Courier, monospace';
+		ctx.font = '800 58px "Courier New", Courier, monospace';
 		ctx.fillStyle = '#111111';
 		ctx.textAlign = 'left';
-		ctx.fillText(`ITEM`, marginX + 15, footerTop + 20);
+		ctx.fillText(`ITEM`, marginX + 15, footerTop + 25);
 		ctx.textAlign = 'right';
-		ctx.fillText(`QTY`, endX - 15, footerTop + 20);
+		ctx.fillText(`QTY`, endX - 15, footerTop + 25);
 
 		// Divider
-		drawReceiptDivider(ctx, marginX, endX, footerTop + 72, 'solid');
+		drawReceiptDivider(ctx, marginX, endX, footerTop + 95, 'solid');
 
-		// Items list (Clean 2-line photobooth items)
-		ctx.font = '700 44px "Courier New", Courier, monospace';
-		let itemY = footerTop + 92;
+		// Items list (Extra-large 54px monospace)
+		ctx.font = '700 54px "Courier New", Courier, monospace';
+		let itemY = footerTop + 120;
 
 		// Item 1
 		ctx.textAlign = 'left';
@@ -402,7 +402,7 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 		ctx.textAlign = 'right';
 		ctx.fillText(`1`, endX - 15, itemY);
 
-		itemY += 58;
+		itemY += 72;
 
 		// Item 2
 		ctx.textAlign = 'left';
@@ -410,47 +410,47 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 		ctx.textAlign = 'right';
 		ctx.fillText(`1`, endX - 15, itemY);
 
-		itemY += 58;
+		itemY += 72;
 
 		// Divider
-		drawReceiptDivider(ctx, marginX, endX, itemY + 10, 'solid');
+		drawReceiptDivider(ctx, marginX, endX, itemY + 12, 'solid');
 
-		// Total line (Big & Bold)
-		ctx.font = '800 56px "Courier New", Courier, monospace';
+		// Total line (Giant 72px bold!)
+		ctx.font = '800 72px "Courier New", Courier, monospace';
 		ctx.textAlign = 'left';
-		ctx.fillText(`TOTAL`, marginX + 15, itemY + 28);
+		ctx.fillText(`TOTAL`, marginX + 15, itemY + 34);
 		ctx.textAlign = 'right';
-		ctx.fillText(`PRICELESS`, endX - 15, itemY + 28);
+		ctx.fillText(`PRICELESS`, endX - 15, itemY + 34);
 
 		// Divider
-		drawReceiptDivider(ctx, marginX, endX, itemY + 95, 'dash');
+		drawReceiptDivider(ctx, marginX, endX, itemY + 125, 'dash');
 
 		// ========================================================
 		// DIGITAL ASSET MODE: Privacy-Safe Barcode (NO QR CODE)
 		// ========================================================
-		const barcodeSectionY = itemY + 115;
+		const barcodeSectionY = itemY + 145;
 
 		// Barcode Section
-		const barcodeY = barcodeSectionY + 20;
-		drawBarcode(ctx, centerX, barcodeY, 760, 85, sessionId);
+		const barcodeY = barcodeSectionY + 28;
+		drawBarcode(ctx, centerX, barcodeY, 800, 100, sessionId);
 
-		const barcodeNumY = barcodeY + 98;
+		const barcodeNumY = barcodeY + 118;
 		ctx.textAlign = 'center';
-		ctx.font = '700 38px "Courier New", Courier, monospace';
+		ctx.font = '700 48px "Courier New", Courier, monospace';
 		ctx.fillStyle = '#222222';
 		ctx.fillText(`4  9 0 1 2 3 4   5 6 7 8 9 0`, centerX, barcodeNumY);
 
 		// Divider
-		const footerEndDividerY = barcodeNumY + 48;
+		const footerEndDividerY = barcodeNumY + 62;
 		drawReceiptDivider(ctx, marginX, endX, footerEndDividerY, 'solid');
 
 		// Thank You & IG
-		ctx.font = '800 48px "Courier New", Courier, monospace';
+		ctx.font = '800 60px "Courier New", Courier, monospace';
 		ctx.fillStyle = '#111111';
-		ctx.fillText('THANK YOU FOR COMING!', centerX, footerEndDividerY + 25);
+		ctx.fillText('THANK YOU FOR COMING!', centerX, footerEndDividerY + 30);
 
-		ctx.font = '700 38px "Courier New", Courier, monospace';
-		ctx.fillText('@CHEKIYUUME', centerX, footerEndDividerY + 80);
+		ctx.font = '700 50px "Courier New", Courier, monospace';
+		ctx.fillText('@CHEKIYUUME', centerX, footerEndDividerY + 105);
 
 		ctx.restore();
 	} else if (!layout.id.startsWith('default-') && !overlayImg) {

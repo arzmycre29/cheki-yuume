@@ -122,7 +122,7 @@ export const ALL_FRAME_TEMPLATES: FrameLayout[] = [
 		mode: 'thematic',
 		totalSlots: 3,
 		canvasWidth: CANVAS_WIDTH,
-		canvasHeight: 3456,
+		canvasHeight: 3800,
 		slotWidth: SLOT_WIDTH,
 		slotHeight: SLOT_HEIGHT,
 		margin: MARGIN,
@@ -130,7 +130,7 @@ export const ALL_FRAME_TEMPLATES: FrameLayout[] = [
 			{
 				index: 0,
 				x: MARGIN,
-				y: 440,
+				y: 600,
 				width: SLOT_WIDTH,
 				height: SLOT_HEIGHT,
 				borderRadius: 0
@@ -138,7 +138,7 @@ export const ALL_FRAME_TEMPLATES: FrameLayout[] = [
 			{
 				index: 1,
 				x: MARGIN,
-				y: 440 + SLOT_HEIGHT + 36,
+				y: 600 + SLOT_HEIGHT + 40,
 				width: SLOT_WIDTH,
 				height: SLOT_HEIGHT,
 				borderRadius: 0
@@ -146,15 +146,15 @@ export const ALL_FRAME_TEMPLATES: FrameLayout[] = [
 			{
 				index: 2,
 				x: MARGIN,
-				y: 440 + (SLOT_HEIGHT + 36) * 2,
+				y: 600 + (SLOT_HEIGHT + 40) * 2,
 				width: SLOT_WIDTH,
 				height: SLOT_HEIGHT,
 				borderRadius: 0
 			}
 		],
 		backgroundColor: '#FFFFFF',
-		footerHeight: 756,
-		aspectRatioLabel: '5:16 (Thermal Receipt)',
+		footerHeight: 870,
+		aspectRatioLabel: '5:18 (Thermal Receipt)',
 		recommendedPaper: '58mm'
 	}
 ];
