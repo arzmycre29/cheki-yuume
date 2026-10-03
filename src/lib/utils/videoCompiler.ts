@@ -1,5 +1,6 @@
 import type { FrameLayout, PhotoItem, StickerItem } from '$lib/types';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import QRCode from 'qrcode';
 
 export interface VideoCompilerOptions {
 	layout: FrameLayout;
@@ -10,6 +11,7 @@ export interface VideoCompilerOptions {
 	sessionId?: string;
 	brandingTitle?: string;
 	brandingSubtitle?: string;
+	shareUrl?: string;
 	fps?: number;
 	bitrate?: number;
 	isMirrored?: boolean;
@@ -134,11 +136,15 @@ interface DrawFrameOpts {
 	activeSlot: number;
 	overlayImg: HTMLImageElement | null;
 	bgImg: HTMLImageElement | null;
+	qrImg: HTMLImageElement | null;
 	stickers: StickerItem[];
 	isMirrored: boolean;
 	brandingTitle: string;
 	brandingSubtitle: string;
 	guestName: string;
+	sessionId: string;
+	dateStr: string;
+	timeStr: string;
 }
 
 function drawCompositeFrame(opts: DrawFrameOpts) {
@@ -156,11 +162,15 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 		preloadedVideos,
 		overlayImg,
 		bgImg,
+		qrImg,
 		stickers,
 		isMirrored,
 		brandingTitle,
 		brandingSubtitle,
-		guestName
+		guestName,
+		sessionId,
+		dateStr,
+		timeStr
 	} = opts;
 
 	ctx.save();
@@ -168,12 +178,67 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 		ctx.scale(canvasWidth / origWidth, canvasHeight / origHeight);
 	}
 
-	// Background
+	const isThematicReceipt = layout.id.startsWith('thematic-receipt');
+
+	// 1. Background
 	ctx.fillStyle = layout.backgroundColor || '#FFFFFF';
 	ctx.fillRect(0, 0, origWidth, origHeight);
 	if (bgImg) ctx.drawImage(bgImg, 0, 0, origWidth, origHeight);
 
-	// Slots
+	// 2. Receipt Header (for Thematic Receipt)
+	if (isThematicReceipt) {
+		ctx.save();
+		ctx.fillStyle = '#111111';
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'top';
+
+		// Store Header
+		ctx.font = '900 42px "Outfit", sans-serif';
+		ctx.letterSpacing = '3px';
+		ctx.fillText(`*** ${(brandingTitle || 'CHEKIYUUME').toUpperCase()} ***`, origWidth / 2, 45);
+
+		ctx.font = '700 22px "Plus Jakarta Sans", monospace';
+		ctx.letterSpacing = '2px';
+		ctx.fillStyle = '#444444';
+		ctx.fillText(`${(brandingSubtitle || 'PHOTOBOOTH STUDIO').toUpperCase()}`, origWidth / 2, 100);
+
+		// Dashed Divider
+		ctx.setLineDash([8, 6]);
+		ctx.strokeStyle = '#555555';
+		ctx.lineWidth = 2.5;
+		ctx.beginPath();
+		ctx.moveTo(54, 145);
+		ctx.lineTo(origWidth - 54, 145);
+		ctx.stroke();
+
+		// Info Rows (monospaced receipt style)
+		ctx.setLineDash([]);
+		ctx.textAlign = 'left';
+		ctx.font = '600 24px "Plus Jakarta Sans", monospace';
+		ctx.fillStyle = '#222222';
+		ctx.fillText(`ORDER : #${(sessionId ? sessionId.slice(-8) : '002819').toUpperCase()}`, 74, 175);
+		ctx.fillText(`DATE  : ${dateStr} ${timeStr}`, 74, 218);
+		ctx.fillText(`GUEST : ${(guestName ? guestName.toUpperCase() : 'SPECIAL GUEST').slice(0, 20)}`, 74, 260);
+
+		ctx.textAlign = 'right';
+		ctx.font = '600 22px "Plus Jakarta Sans", monospace';
+		ctx.fillStyle = '#555555';
+		ctx.fillText(`POS #01`, origWidth - 74, 175);
+		ctx.fillText(`REG: MEMORY`, origWidth - 74, 218);
+		ctx.fillText(`3 POSES`, origWidth - 74, 260);
+
+		// Dashed Divider before photos
+		ctx.setLineDash([8, 6]);
+		ctx.strokeStyle = '#555555';
+		ctx.lineWidth = 2.5;
+		ctx.beginPath();
+		ctx.moveTo(54, 310);
+		ctx.lineTo(origWidth - 54, 310);
+		ctx.stroke();
+		ctx.restore();
+	}
+
+	// 3. Slots (Videos / Photos)
 	for (let i = 0; i < numSlots; i++) {
 		const slot = layout.slots[i];
 		if (!slot) continue;
@@ -190,12 +255,22 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 			const photo = preloadedImages.get(i);
 			if (photo) drawToSlot(ctx, photo, slot, false);
 		}
+
+		// Optional border outline for receipt photo slots
+		if (isThematicReceipt) {
+			ctx.save();
+			ctx.strokeStyle = '#444444';
+			ctx.lineWidth = 2.5;
+			drawRoundedRect(ctx, slot.x, slot.y, slot.width, slot.height, slot.borderRadius ?? 4);
+			ctx.stroke();
+			ctx.restore();
+		}
 	}
 
-	// Overlay
+	// 4. Overlay Artwork
 	if (overlayImg) ctx.drawImage(overlayImg, 0, 0, origWidth, origHeight);
 
-	// Stickers
+	// 5. Stickers
 	for (const st of stickers) {
 		ctx.save();
 		ctx.translate((st.x / 100) * origWidth, (st.y / 100) * origHeight);
@@ -207,13 +282,115 @@ function drawCompositeFrame(opts: DrawFrameOpts) {
 		ctx.restore();
 	}
 
-	// Branding footer (custom frames only)
-	if (!layout.id.startsWith('default-') && !overlayImg) {
+	// 6. Footer Rendering
+	if (isThematicReceipt) {
+		const footerTop = layout.canvasHeight - layout.footerHeight;
+		const centerX = origWidth / 2;
+
+		ctx.save();
+		ctx.textBaseline = 'top';
+
+		// Top dashed line of footer
+		ctx.setLineDash([8, 6]);
+		ctx.strokeStyle = '#555555';
+		ctx.lineWidth = 2.5;
+		ctx.beginPath();
+		ctx.moveTo(54, footerTop + 20);
+		ctx.lineTo(origWidth - 54, footerTop + 20);
+		ctx.stroke();
+
+		// Receipt Itemized summary
+		ctx.setLineDash([]);
+		ctx.textAlign = 'left';
+		ctx.font = '600 24px "Plus Jakarta Sans", monospace';
+		ctx.fillStyle = '#222222';
+		ctx.fillText(`3X PHOTOBOOTH SNAPSHOTS`, 74, footerTop + 65);
+		ctx.textAlign = 'right';
+		ctx.fillText(`PRICELESS`, origWidth - 74, footerTop + 65);
+
+		ctx.textAlign = 'left';
+		ctx.font = '500 22px "Plus Jakarta Sans", monospace';
+		ctx.fillStyle = '#666666';
+		ctx.fillText(`DIGITAL COPY & BTS VIDEO`, 74, footerTop + 105);
+		ctx.textAlign = 'right';
+		ctx.fillText(`INCLUDED`, origWidth - 74, footerTop + 105);
+
+		// Double separator
+		ctx.strokeStyle = '#222222';
+		ctx.lineWidth = 3;
+		ctx.beginPath();
+		ctx.moveTo(54, footerTop + 145);
+		ctx.lineTo(origWidth - 54, footerTop + 145);
+		ctx.stroke();
+
+		// Total Line
+		ctx.textAlign = 'left';
+		ctx.font = '800 28px "Plus Jakarta Sans", monospace';
+		ctx.fillStyle = '#111111';
+		ctx.fillText(`TOTAL HAPPINESS`, 74, footerTop + 195);
+		ctx.textAlign = 'right';
+		ctx.fillText(`100% SUCCESS`, origWidth - 74, footerTop + 195);
+
+		// Dashed Divider below Total
+		ctx.setLineDash([8, 6]);
+		ctx.strokeStyle = '#555555';
+		ctx.lineWidth = 2.5;
+		ctx.beginPath();
+		ctx.moveTo(54, footerTop + 235);
+		ctx.lineTo(origWidth - 54, footerTop + 235);
+		ctx.stroke();
+		ctx.setLineDash([]);
+
+		if (qrImg) {
+			// Subtitle above QR
+			ctx.textAlign = 'center';
+			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
+			ctx.letterSpacing = '1px';
+			ctx.fillStyle = '#222222';
+			ctx.fillText('SCAN TO DOWNLOAD PHOTO & VIDEO', centerX, footerTop + 265);
+
+			// Draw QR Code centered
+			const qrSize = 260;
+			const qrX = centerX - qrSize / 2;
+			const qrY = footerTop + 295;
+			ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+
+			// Order / Session ID snippet below QR
+			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
+			ctx.letterSpacing = '0px';
+			ctx.fillStyle = '#333333';
+			const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
+			ctx.fillText(codeStr, centerX, footerTop + 575);
+		} else {
+			// Fallback text if QR image is not available
+			ctx.textAlign = 'center';
+			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
+			ctx.letterSpacing = '0px';
+			ctx.fillStyle = '#333333';
+			const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
+			ctx.fillText(codeStr, centerX, footerTop + 375);
+		}
+
+		// Thank You Note
+		ctx.textAlign = 'center';
+		ctx.font = '800 24px "Outfit", sans-serif';
+		ctx.letterSpacing = '2px';
+		ctx.fillStyle = '#111111';
+		ctx.fillText(`*** THANK YOU FOR VISITING ***`, centerX, footerTop + 620);
+
+		// Social handle
+		ctx.font = '600 18px "Plus Jakarta Sans", monospace';
+		ctx.letterSpacing = '1px';
+		ctx.fillStyle = '#666666';
+		ctx.fillText(`SHARE YOUR MOMENTS • TAG US @CHEKIYUUME`, centerX, footerTop + 660);
+
+		ctx.restore();
+	} else if (!layout.id.startsWith('default-') && !overlayImg) {
 		const isDarkBg = ['#18181b', '#000000'].includes((layout.backgroundColor || '').toLowerCase());
 		const textColor = isDarkBg ? '#F4F4F5' : '#18181B';
 		const subTextColor = isDarkBg ? '#A1A1AA' : '#71717A';
 		const footerTop = layout.canvasHeight - (layout.footerHeight || 270);
-		const cx = layout.canvasWidth / 2;
+		const cx = origWidth / 2;
 
 		ctx.save();
 		ctx.fillStyle = textColor;
@@ -246,6 +423,7 @@ export async function compileSequentialVideostrip(
 		slotPhotoIds,
 		stickers = [],
 		guestName = '',
+		sessionId = '',
 		brandingTitle = 'CHEKIYUUME',
 		brandingSubtitle = 'PHOTOBOOTH STUDIO',
 		fps = 24,
@@ -305,6 +483,44 @@ export async function compileSequentialVideostrip(
 		} catch (_) {}
 	}
 
+	// Preload QR Code (for Thematic Receipt)
+	let qrImg: HTMLImageElement | null = null;
+	const isThematicReceipt = layout.id.startsWith('thematic-receipt');
+	if (isThematicReceipt) {
+		const targetShareUrl = options.shareUrl || (
+			sessionId
+				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `/share/${sessionId}`)
+				: ''
+		);
+		if (targetShareUrl) {
+			try {
+				const qrDataUrl = await QRCode.toDataURL(targetShareUrl, {
+					width: 320,
+					margin: 1,
+					color: { dark: '#000000', light: '#ffffff' },
+					errorCorrectionLevel: 'M'
+				});
+				if (qrDataUrl) {
+					qrImg = await loadImage(qrDataUrl);
+				}
+			} catch (e) {
+				console.warn('[VideoCompiler] Failed to generate QR code for video:', e);
+			}
+		}
+	}
+
+	// Pre-format receipt date & time
+	const now = new Date();
+	const dateStr = now.toLocaleDateString('id-ID', {
+		day: '2-digit',
+		month: 'short',
+		year: 'numeric'
+	}).toUpperCase();
+	const timeStr = now.toLocaleTimeString('id-ID', {
+		hour: '2-digit',
+		minute: '2-digit'
+	});
+
 	// Timing calculation
 	const segmentDuration =
 		countdownSeconds && Number.isFinite(countdownSeconds) && countdownSeconds > 0
@@ -324,11 +540,17 @@ export async function compileSequentialVideostrip(
 	const evenOrigWidth = origWidth % 2 === 0 ? origWidth : origWidth - 1;
 	const evenOrigHeight = origHeight % 2 === 0 ? origHeight : origHeight - 1;
 
-	// Scale down for video encoding stability (1080p max height for mobile compatibility)
-	const MAX_DIMENSION = 1080;
-	let scaleFactor = 1;
-	if (evenOrigWidth > MAX_DIMENSION || evenOrigHeight > MAX_DIMENSION) {
-		scaleFactor = Math.min(MAX_DIMENSION / evenOrigWidth, MAX_DIMENSION / evenOrigHeight);
+	// Optimal target width: 720px (HD) for vertical photostrips, or up to 1080px (FHD) if height <= 1920
+	let targetWidth = 720;
+	if (evenOrigHeight <= 1920 && evenOrigWidth <= 1080) {
+		targetWidth = Math.min(evenOrigWidth, 1080);
+	}
+	let scaleFactor = targetWidth / evenOrigWidth;
+
+	// Safety cap: Ensure height does not exceed 2304px (H.264 Level 4.1 safe limit: 6480 macroblocks <= 8192)
+	const MAX_SAFE_HEIGHT = 2304;
+	if (Math.round(evenOrigHeight * scaleFactor) > MAX_SAFE_HEIGHT) {
+		scaleFactor = MAX_SAFE_HEIGHT / evenOrigHeight;
 	}
 
 	let canvasWidth = Math.round(evenOrigWidth * scaleFactor);
@@ -355,11 +577,15 @@ export async function compileSequentialVideostrip(
 		preloadedVideos,
 		overlayImg,
 		bgImg,
+		qrImg,
 		stickers,
 		isMirrored,
 		brandingTitle,
 		brandingSubtitle,
-		guestName
+		guestName,
+		sessionId: sessionId || '',
+		dateStr,
+		timeStr
 	};
 
 	// Attach hidden container to DOM so browser hardware decoder keeps video active
@@ -427,6 +653,7 @@ export async function compileSequentialVideostrip(
 				{ codec: 'avc1.42001f', label: '3.1 Baseline' }
 			];
 
+			const targetBitrate = options.bitrate || 6_000_000;
 			let chosenCodec = AVC_LEVELS[1].codec; // default to 4.0 High
 			for (const level of AVC_LEVELS) {
 				try {
@@ -434,7 +661,7 @@ export async function compileSequentialVideostrip(
 						codec: level.codec,
 						width: canvasWidth,
 						height: canvasHeight,
-						bitrate: 3_500_000,
+						bitrate: targetBitrate,
 						framerate: fps
 					});
 					if (isSupported.supported) {
@@ -467,7 +694,7 @@ export async function compileSequentialVideostrip(
 				codec: chosenCodec,
 				width: canvasWidth,
 				height: canvasHeight,
-				bitrate: 3_500_000,
+				bitrate: targetBitrate,
 				framerate: fps
 			});
 
@@ -589,7 +816,7 @@ export async function compileSequentialVideostrip(
 				? 'video/webm;codecs=vp9'
 				: 'video/webm';
 
-		const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 3_000_000 });
+		const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: options.bitrate || 6_000_000 });
 		const chunks: Blob[] = [];
 
 		recorder.ondataavailable = (e) => {

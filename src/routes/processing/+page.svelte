@@ -92,6 +92,7 @@
 					sessionId: currentSession.sessionId,
 					brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
 					brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
+					shareUrl: shareTargetUrl,
 					isMirrored: settings.isMirrored !== false,
 					countdownSeconds: settings.countdownSeconds || 3,
 					onProgress: (p) => {
