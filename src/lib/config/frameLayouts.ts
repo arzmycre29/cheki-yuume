@@ -122,7 +122,7 @@ export const ALL_FRAME_TEMPLATES: FrameLayout[] = [
 		mode: 'thematic',
 		totalSlots: 3,
 		canvasWidth: CANVAS_WIDTH,
-		canvasHeight: 3620,
+		canvasHeight: 3240,
 		slotWidth: SLOT_WIDTH,
 		slotHeight: SLOT_HEIGHT,
 		margin: MARGIN,
@@ -153,8 +153,8 @@ export const ALL_FRAME_TEMPLATES: FrameLayout[] = [
 			}
 		],
 		backgroundColor: '#FFFFFF',
-		footerHeight: 1060,
-		aspectRatioLabel: '5:16 (Thermal Receipt)',
+		footerHeight: 560,
+		aspectRatioLabel: '5:15 (Thermal Receipt)',
 		recommendedPaper: '58mm'
 	}
 ];

@@ -1206,3 +1206,234 @@ export async function retrieveSessionFromManifestUrl(
 		};
 	}
 }
+
+/**
+ * Checks whether an asset or resource still exists on Cloudinary (returns false if 404/410/deleted)
+ */
+export async function checkCloudinaryResourceExists(url: string, timeoutMs: number = 6000): Promise<boolean> {
+	if (!url || typeof url !== 'string' || !url.startsWith('http')) {
+		return false;
+	}
+
+	const testUrl = url.includes('?') ? `${url}&_cb=${Date.now()}` : `${url}?_cb=${Date.now()}`;
+
+	try {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+		const res = await fetch(testUrl, {
+			method: 'GET',
+			cache: 'no-store',
+			signal: controller.signal,
+			headers: {
+				'Cache-Control': 'no-cache, no-store, must-revalidate',
+				'Pragma': 'no-cache'
+			}
+		});
+		clearTimeout(timer);
+
+		// If Cloudinary returned 404 Not Found or 410 Gone, the asset is definitely deleted!
+		if (res.status === 404 || res.status === 410) {
+			return false;
+		}
+
+		if (res.ok) {
+			return true;
+		}
+
+		// Fallback for image URLs if status is opaque/unexpected
+		if (url.match(/\.(png|jpe?g|webp|gif)/i)) {
+			return await testImageLoad(testUrl, timeoutMs);
+		}
+
+		return false;
+	} catch (err: any) {
+		// Fallback for image URLs on network or CORS rejection
+		if (url.match(/\.(png|jpe?g|webp|gif)/i)) {
+			return await testImageLoad(testUrl, timeoutMs);
+		}
+		return false;
+	}
+}
+
+function testImageLoad(url: string, timeoutMs: number = 6000): Promise<boolean> {
+	return new Promise<boolean>((resolve) => {
+		if (typeof Image === 'undefined') {
+			resolve(false);
+			return;
+		}
+		const img = new Image();
+		let done = false;
+		const timer = setTimeout(() => {
+			if (!done) {
+				done = true;
+				resolve(false);
+			}
+		}, timeoutMs);
+
+		img.onload = () => {
+			if (!done) {
+				done = true;
+				clearTimeout(timer);
+				resolve(true);
+			}
+		};
+		img.onerror = () => {
+			if (!done) {
+				done = true;
+				clearTimeout(timer);
+				resolve(false);
+			}
+		};
+		img.src = url;
+	});
+}
+
+/**
+ * Checks if a session folder still exists in Cloudinary by checking its primary photostrip URL,
+ * manifest URL, or candidate URLs.
+ */
+export async function checkSessionExistsInCloudinary(
+	session: {
+		sessionId: string;
+		guestName?: string;
+		cloudPhotoUrl?: string | null;
+		photoUrl?: string;
+		manifestUrl?: string;
+		photostripDataUrl?: string | null;
+	},
+	cloudName: string
+): Promise<boolean> {
+	const cleanCloud = cloudName.trim();
+	if (!cleanCloud) return false;
+
+	// 1. If explicit photoUrl is given (e.g. from manifest or cloudPhotoUrl)
+	const primaryPhotoUrl =
+		session.cloudPhotoUrl && session.cloudPhotoUrl.startsWith('http') && session.cloudPhotoUrl.includes('cloudinary.com')
+			? session.cloudPhotoUrl
+			: session.photoUrl && session.photoUrl.startsWith('http') && session.photoUrl.includes('cloudinary.com')
+			? session.photoUrl
+			: session.photostripDataUrl && session.photostripDataUrl.startsWith('http') && session.photostripDataUrl.includes('cloudinary.com')
+			? session.photostripDataUrl
+			: null;
+
+	if (primaryPhotoUrl) {
+		const exists = await checkCloudinaryResourceExists(primaryPhotoUrl);
+		if (exists) return true;
+	}
+
+	// 2. Check manifestUrl if available
+	if (session.manifestUrl && session.manifestUrl.startsWith('http') && session.manifestUrl.includes('cloudinary.com')) {
+		const exists = await checkCloudinaryResourceExists(session.manifestUrl);
+		if (exists) return true;
+	}
+
+	// 3. Fallback candidate URLs based on folder convention chekiyuume/sessions/{guest}_{sessionId}
+	const sanitizedGuest = session.guestName
+		? session.guestName
+				.trim()
+				.toLowerCase()
+				.replace(/[^a-z0-9_-]/g, '_')
+				.slice(0, 30)
+		: 'guest';
+
+	const candidates = [
+		`https://res.cloudinary.com/${cleanCloud}/image/upload/chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}/photostrip_${session.sessionId}.png`,
+		`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}/manifest.json`,
+		`https://res.cloudinary.com/${cleanCloud}/image/upload/chekiyuume/sessions/${session.sessionId}/photostrip_${session.sessionId}.png`,
+		`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions/${session.sessionId}/manifest.json`
+	];
+
+	for (const url of candidates) {
+		const exists = await checkCloudinaryResourceExists(url, 3000);
+		if (exists) return true;
+	}
+
+	return false;
+}
+
+/**
+ * Verifies all remote sessions in parallel batches of 8.
+ * Returns filtered active sessions and IDs of sessions whose folders were deleted.
+ */
+export async function verifyActiveCloudinarySessions(
+	sessions: CloudSessionSummary[],
+	cloudName: string,
+	onProgress?: (checked: number, total: number) => void
+): Promise<{ activeSessions: CloudSessionSummary[]; deletedSessionIds: string[] }> {
+	const activeSessions: CloudSessionSummary[] = [];
+	const deletedSessionIds: string[] = [];
+	const total = sessions.length;
+	let checked = 0;
+
+	const batchSize = 8;
+	for (let i = 0; i < total; i += batchSize) {
+		const chunk = sessions.slice(i, i + batchSize);
+		const results = await Promise.all(
+			chunk.map(async (cs) => {
+				const exists = await checkSessionExistsInCloudinary(cs, cloudName);
+				return { session: cs, exists };
+			})
+		);
+
+		for (const res of results) {
+			if (res.exists) {
+				activeSessions.push(res.session);
+			} else {
+				console.log(`[CloudVerify] Session "${res.session.sessionId}" folder not found on Cloudinary (404/deleted)`);
+				deletedSessionIds.push(res.session.sessionId);
+			}
+		}
+
+		checked += chunk.length;
+		if (onProgress) {
+			onProgress(Math.min(checked, total), total);
+		}
+	}
+
+	return { activeSessions, deletedSessionIds };
+}
+
+/**
+ * Updates the global sessions_manifest.json on Cloudinary with a cleaned list of active sessions
+ */
+export async function updateGlobalSessionsManifestInCloudinary(
+	activeSessions: CloudSessionSummary[],
+	cloudName: string,
+	uploadPreset: string
+): Promise<boolean> {
+	try {
+		const cleanCloud = cloudName.trim();
+		const cleanPreset = uploadPreset.trim();
+		if (!cleanCloud || !cleanPreset) return false;
+
+		const manifestData = {
+			version: '1.0',
+			updatedAt: Date.now(),
+			totalSessions: activeSessions.length,
+			sessions: activeSessions
+		};
+
+		const blob = new Blob([JSON.stringify(manifestData, null, 2)], {
+			type: 'application/json'
+		});
+
+		console.log(`[CloudSync] Overwriting global sessions_manifest.json with ${activeSessions.length} active sessions...`);
+		const uploadedUrl = await uploadToCloudinary(blob, 'raw', cleanCloud, cleanPreset, {
+			folder: 'chekiyuume',
+			publicId: 'sessions_manifest.json',
+			fileName: 'sessions_manifest.json',
+			overwrite: true,
+			tags: ['chekiyuume', 'sessions_manifest', 'database']
+		});
+
+		if (typeof localStorage !== 'undefined' && uploadedUrl) {
+			localStorage.setItem('cheki_last_sessions_manifest_url', uploadedUrl);
+		}
+		console.log('[CloudSync] ✓ Global manifest successfully pruned & updated! URL:', uploadedUrl);
+		return true;
+	} catch (e) {
+		console.warn('[CloudSync] Failed to update global sessions manifest after pruning:', e);
+		return false;
+	}
+}

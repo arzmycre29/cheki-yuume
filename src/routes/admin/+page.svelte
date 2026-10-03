@@ -28,7 +28,10 @@
 		retrieveSessionsFromCloudinary,
 		retrieveSessionBySessionId,
 		retrieveSessionFromManifestUrl,
-		testCloudinaryConnection
+		testCloudinaryConnection,
+		verifyActiveCloudinarySessions,
+		checkSessionExistsInCloudinary,
+		updateGlobalSessionsManifestInCloudinary
 	} from '$lib/services/cloudStorage';
 	import PrintModal from '$lib/components/PrintModal.svelte';
 	import { Camera2Service, type Camera2Device } from '$lib/services/camera2Service';
@@ -610,97 +613,168 @@
 
 		isSyncingSessions = true;
 		try {
+			saveMessage = 'Mengambil daftar sesi dari Cloudinary...';
 			const res = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName);
 			console.log('[AdminSync] retrieveSessionsFromCloudinary response:', res);
-			if (res.success && res.sessions.length > 0) {
-				const cur = await getAllSessionsFromDB();
-				const existingMap = new Map(cur.map((s) => [s.sessionId, s]));
-				let addedCount = 0;
-				let updatedCount = 0;
-
-				for (const cs of res.sessions) {
-					const existing = existingMap.get(cs.sessionId);
-					const count = cs.photosCount || (cs.layoutId?.includes('1') ? 1 : cs.layoutId?.includes('2') ? 2 : 4);
-					if (!existing) {
-						await saveSessionToDB({
-							sessionId: cs.sessionId,
-							guestName: cs.guestName || '',
-							createdAt: cs.createdAt || Date.now(),
-							mode: (cs.mode as any) || 'default',
-							layoutId: cs.layoutId || 'default-4-classic',
-							photos: Array.from({ length: count }).map((_, idx) => ({
-								id: `cloud-${cs.sessionId}-${idx}`,
-								index: idx,
-								dataUrl: '',
-								blob: undefined,
-								timestamp: cs.createdAt || Date.now()
-							})),
-							photosCount: count,
-							assignedSlotPhotoIds: [],
-							stickers: [],
-							photostripDataUrl: cs.photoUrl || '',
-							photostripBlob: null,
-							videostripBlob: null,
-							videostripUrl: cs.videoUrl || null,
-							printCount: cs.printCount || 0,
-							cloudUploadStatus: 'success',
-							cloudPhotoUrl: cs.photoUrl || null,
-							cloudVideoUrl: cs.videoUrl || null,
-							cloudShareUrl: cs.shareUrl || null,
-							isOfflineSaved: true
-						});
-						addedCount++;
-					} else {
-						let updated = false;
-						if (cs.photoUrl && existing.cloudPhotoUrl !== cs.photoUrl) {
-							existing.cloudPhotoUrl = cs.photoUrl;
-							existing.cloudUploadStatus = 'success';
-							if (!existing.photostripDataUrl) existing.photostripDataUrl = cs.photoUrl;
-							updated = true;
-						}
-						if (cs.videoUrl && existing.cloudVideoUrl !== cs.videoUrl) {
-							existing.cloudVideoUrl = cs.videoUrl;
-							if (!existing.videostripUrl) existing.videostripUrl = cs.videoUrl;
-							updated = true;
-						}
-						if (cs.shareUrl && existing.cloudShareUrl !== cs.shareUrl) {
-							existing.cloudShareUrl = cs.shareUrl;
-							updated = true;
-						}
-						if ((!existing.photos || existing.photos.length === 0) && (!existing.photosCount || existing.photosCount === 0)) {
-							existing.photosCount = count;
-							existing.photos = Array.from({ length: count }).map((_, idx) => ({
-								id: `cloud-${cs.sessionId}-${idx}`,
-								index: idx,
-								dataUrl: '',
-								blob: undefined,
-								timestamp: cs.createdAt || Date.now()
-							}));
-							updated = true;
-						}
-						if (updated) {
-							await saveSessionToDB(existing);
-							updatedCount++;
-						}
-					}
-				}
-
-				await loadSessions();
-				console.log(`[AdminSync] ✓ Sync complete: ${addedCount} added, ${updatedCount} updated.`);
-				saveMessage = `Berhasil menyinkronkan riwayat! (${addedCount} sesi baru ditambahkan${updatedCount > 0 ? `, ${updatedCount} diperbarui` : ''} dari Cloudinary)`;
-			} else if (res.success) {
-				console.log('[AdminSync] Manifest retrieved successfully, but 0 sessions found.');
-				saveMessage = 'Sinkronisasi riwayat selesai: Semua sesi sudah up to date.';
-			} else {
+			if (!res.success) {
 				console.error('[AdminSync] ✗ Sync failed with error:', res.error);
 				alert(res.error || 'Gagal menyinkronkan riwayat dari Cloudinary. Periksa console F12 untuk detail URL yang diuji.');
+				return;
 			}
+
+			const cur = await getAllSessionsFromDB();
+			const existingMap = new Map(cur.map((s) => [s.sessionId, s]));
+
+			// 1. Verify remote sessions: verify if each session's folder/asset still exists on Cloudinary
+			saveMessage = `Memverifikasi folder sesi di Cloudinary (0/${res.sessions.length})...`;
+			const { activeSessions, deletedSessionIds } = await verifyActiveCloudinarySessions(
+				res.sessions,
+				formSettings.cloudinaryCloudName,
+				(checked, total) => {
+					saveMessage = `Memverifikasi folder sesi di Cloudinary (${checked}/${total})...`;
+				}
+			);
+
+			const deletedIdSet = new Set(deletedSessionIds);
+			let localDeletedCount = 0;
+
+			// 2. Also check local sessions that were previously synced to Cloudinary
+			// If their folder was deleted from Cloudinary, remove them from local DB as well
+			saveMessage = 'Memeriksa sesi lokal yang terhubung ke Cloudinary...';
+			const cloudLinkedLocalSessions = cur.filter(
+				(s) =>
+					s.cloudUploadStatus === 'success' ||
+					(s.cloudPhotoUrl && s.cloudPhotoUrl.includes('cloudinary.com')) ||
+					(s.photostripDataUrl && s.photostripDataUrl.includes('cloudinary.com'))
+			);
+
+			for (const localSession of cloudLinkedLocalSessions) {
+				if (deletedIdSet.has(localSession.sessionId)) {
+					console.log(`[AdminSync] Deleting local session ${localSession.sessionId} (folder deleted from Cloudinary)`);
+					await deleteSessionFromDB(localSession.sessionId);
+					localDeletedCount++;
+					continue;
+				}
+
+				const isInActiveRemote = activeSessions.some((cs) => cs.sessionId === localSession.sessionId);
+				if (!isInActiveRemote) {
+					const stillExists = await checkSessionExistsInCloudinary(
+						localSession,
+						formSettings.cloudinaryCloudName
+					);
+					if (!stillExists) {
+						console.log(`[AdminSync] Deleting local session ${localSession.sessionId} (folder deleted from Cloudinary)`);
+						await deleteSessionFromDB(localSession.sessionId);
+						deletedIdSet.add(localSession.sessionId);
+						localDeletedCount++;
+					}
+				}
+			}
+
+			// 3. Save or update remaining active sessions into local DB
+			let addedCount = 0;
+			let updatedCount = 0;
+
+			for (const cs of activeSessions) {
+				const existing = existingMap.get(cs.sessionId);
+				const count = cs.photosCount || (cs.layoutId?.includes('1') ? 1 : cs.layoutId?.includes('2') ? 2 : 4);
+				if (!existing) {
+					await saveSessionToDB({
+						sessionId: cs.sessionId,
+						guestName: cs.guestName || '',
+						createdAt: cs.createdAt || Date.now(),
+						mode: (cs.mode as any) || 'default',
+						layoutId: cs.layoutId || 'default-4-classic',
+						photos: Array.from({ length: count }).map((_, idx) => ({
+							id: `cloud-${cs.sessionId}-${idx}`,
+							index: idx,
+							dataUrl: '',
+							blob: undefined,
+							timestamp: cs.createdAt || Date.now()
+						})),
+						photosCount: count,
+						assignedSlotPhotoIds: [],
+						stickers: [],
+						photostripDataUrl: cs.photoUrl || '',
+						photostripBlob: null,
+						videostripBlob: null,
+						videostripUrl: cs.videoUrl || null,
+						printCount: cs.printCount || 0,
+						cloudUploadStatus: 'success',
+						cloudPhotoUrl: cs.photoUrl || null,
+						cloudVideoUrl: cs.videoUrl || null,
+						cloudShareUrl: cs.shareUrl || null,
+						isOfflineSaved: true
+					});
+					addedCount++;
+				} else {
+					let updated = false;
+					if (cs.photoUrl && existing.cloudPhotoUrl !== cs.photoUrl) {
+						existing.cloudPhotoUrl = cs.photoUrl;
+						existing.cloudUploadStatus = 'success';
+						if (!existing.photostripDataUrl) existing.photostripDataUrl = cs.photoUrl;
+						updated = true;
+					}
+					if (cs.videoUrl && existing.cloudVideoUrl !== cs.videoUrl) {
+						existing.cloudVideoUrl = cs.videoUrl;
+						if (!existing.videostripUrl) existing.videostripUrl = cs.videoUrl;
+						updated = true;
+					}
+					if (cs.shareUrl && existing.cloudShareUrl !== cs.shareUrl) {
+						existing.cloudShareUrl = cs.shareUrl;
+						updated = true;
+					}
+					if ((!existing.photos || existing.photos.length === 0) && (!existing.photosCount || existing.photosCount === 0)) {
+						existing.photosCount = count;
+						existing.photos = Array.from({ length: count }).map((_, idx) => ({
+							id: `cloud-${cs.sessionId}-${idx}`,
+							index: idx,
+							dataUrl: '',
+							blob: undefined,
+							timestamp: cs.createdAt || Date.now()
+						}));
+						updated = true;
+					}
+					if (updated) {
+						await saveSessionToDB(existing);
+						updatedCount++;
+					}
+				}
+			}
+
+			// 4. If any deleted sessions were removed, prune Cloudinary global sessions_manifest.json as well
+			if (deletedIdSet.size > 0 && formSettings.cloudinaryUploadPreset?.trim()) {
+				console.log(`[AdminSync] Pruning ${deletedIdSet.size} deleted sessions from global Cloudinary manifest...`);
+				await updateGlobalSessionsManifestInCloudinary(
+					activeSessions,
+					formSettings.cloudinaryCloudName,
+					formSettings.cloudinaryUploadPreset
+				);
+			}
+
+			// 5. Reload sessions in UI so deleted ones disappear instantly from the list
+			await loadSessions();
+
+			const details: string[] = [];
+			if (addedCount > 0) details.push(`${addedCount} sesi baru ditambahkan`);
+			if (updatedCount > 0) details.push(`${updatedCount} diperbarui`);
+			if (localDeletedCount > 0) details.push(`${localDeletedCount} sesi dibersihkan (folder di Cloudinary sudah dihapus)`);
+
+			let summaryMsg = 'Sinkronisasi riwayat selesai! ';
+			if (details.length === 0) {
+				summaryMsg += 'Semua sesi sudah sesuai dengan Cloudinary.';
+			} else {
+				summaryMsg += `(${details.join(', ')})`;
+			}
+
+			console.log(`[AdminSync] ✓ ${summaryMsg}`);
+			saveMessage = summaryMsg;
 		} catch (err: any) {
 			console.error('[AdminSync] ✗ Exception during sync:', err);
 			alert(`Gagal mengambil riwayat dari Cloud: ${err?.message || err}`);
 		} finally {
 			isSyncingSessions = false;
-			setTimeout(() => (saveMessage = ''), 4000);
+			setTimeout(() => (saveMessage = ''), 5000);
 		}
 	}
 
@@ -1358,7 +1432,7 @@
 							onclick={handleSyncSessionsFromCloud}
 							disabled={isSyncingSessions}
 							class="flex items-center gap-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600 border border-rose-500/40 px-3.5 py-2 text-xs font-bold text-rose-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
-							title="Tarik & sinkronkan semua riwayat foto dari Cloudinary antar laptop / HP"
+							title="Tarik & sinkronkan riwayat dari Cloudinary (sesi yang foldernya sudah dihapus di Cloudinary akan otomatis dibersihkan dari list)"
 						>
 							{#if isSyncingSessions}
 								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
