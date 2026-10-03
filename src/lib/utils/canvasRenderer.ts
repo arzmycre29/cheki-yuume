@@ -65,77 +65,6 @@ function drawRoundedRect(
 }
 
 /**
- * Applies thermal print pre-processing to a photo slot on the canvas:
- * 1. Grayscale luminance conversion
- * 2. Midtone lift (gamma ~0.82) to compensate for thermal printer dot gain
- * 3. High-contrast S-curve (+28%) to cleanly separate subject from background
- * 4. 3x3 convolution unsharp mask to make eyes, hair, and facial contours sharp and defined
- */
-function applyThermalPhotoFilter(
-	ctx: CanvasRenderingContext2D,
-	x: number,
-	y: number,
-	width: number,
-	height: number
-) {
-	try {
-		const imgData = ctx.getImageData(x, y, width, height);
-		const data = imgData.data;
-		const totalPixels = width * height;
-		const lums = new Float32Array(totalPixels);
-
-		// Pass 1: Luminance conversion, gamma midtone lift, and contrast boost
-		for (let i = 0, p = 0; p < totalPixels; i += 4, p++) {
-			const r = data[i];
-			const g = data[i + 1];
-			const b = data[i + 2];
-			const l = 0.299 * r + 0.587 * g + 0.114 * b;
-
-			// Gamma midtone lift (0.82) to preserve facial shadows from ink flooding
-			let norm = Math.pow(l / 255, 0.82);
-			// S-curve contrast boost (+28%)
-			norm = (norm - 0.5) * 1.28 + 0.5;
-			if (norm < 0) norm = 0;
-			else if (norm > 1) norm = 1;
-
-			lums[p] = norm * 255;
-		}
-
-		// Pass 2: 3x3 Unsharp Mask convolution kernel
-		for (let py = 0; py < height; py++) {
-			const row = py * width;
-			const upRow = (py > 0 ? py - 1 : py) * width;
-			const downRow = (py < height - 1 ? py + 1 : py) * width;
-
-			for (let px = 0; px < width; px++) {
-				const left = px > 0 ? px - 1 : px;
-				const right = px < width - 1 ? px + 1 : px;
-				const p = row + px;
-
-				const center = lums[p];
-				const up = lums[upRow + px];
-				const down = lums[downRow + px];
-				const leftVal = lums[row + left];
-				const rightVal = lums[row + right];
-
-				let val = 2.0 * center - 0.25 * (up + down + leftVal + rightVal);
-				if (val < 0) val = 0;
-				else if (val > 255) val = 255;
-
-				const i = p * 4;
-				data[i] = val;
-				data[i + 1] = val;
-				data[i + 2] = val;
-			}
-		}
-
-		ctx.putImageData(imgData, x, y);
-	} catch (e) {
-		console.warn('[canvasRenderer] Thermal photo filter skipped:', e);
-	}
-}
-
-/**
  * Draws vintage rubber PAID stamp effect on the receipt
  */
 function drawReceiptStamp(
@@ -463,11 +392,6 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 					slot.width,
 					slot.height
 				);
-
-				// Enhance photo contrast and sharpness specifically for thermal 1-bit printing
-				if (isThematicReceipt) {
-					applyThermalPhotoFilter(ctx, slot.x, slot.y, slot.width, slot.height);
-				}
 			} catch (err) {
 				console.error(`Failed to draw photo in slot ${i}`, err);
 			}
