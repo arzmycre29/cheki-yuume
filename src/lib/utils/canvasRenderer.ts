@@ -13,6 +13,18 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 	});
 }
 
+export function recordPrintLog(msg: string) {
+	try {
+		console.log('[ReceiptDebug]', msg);
+		if (typeof window !== 'undefined') {
+			const existing = JSON.parse(sessionStorage.getItem('chekiyuume_print_debug') || '[]');
+			existing.push(`[${new Date().toISOString().slice(11, 23)}] ${msg}`);
+			sessionStorage.setItem('chekiyuume_print_debug', JSON.stringify(existing.slice(-100)));
+		}
+	} catch (_) {}
+}
+
+
 
 export interface RenderOptions {
 	layout: FrameLayout;
@@ -106,30 +118,61 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		throw new Error('Canvas 2D context creation failed');
 	}
 
-	const isThematicReceipt = layout.id.startsWith('thematic-receipt');
+	const isThematicReceipt = layout.id.startsWith('thematic-receipt') || (layout as any).mode === 'thematic';
 
 	let qrCanvas: HTMLCanvasElement | null = null;
+	let qrError: string | null = null;
 	if (isThematicReceipt && options.isForPrint) {
+		recordPrintLog(`[canvasRenderer] Preparing print QR: layout=${layout.id}, sessionId=${sessionId || 'NONE'}`);
 		const targetShareUrl = options.shareUrl || (
 			sessionId
-				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `/share/${sessionId}`)
-				: ''
+				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `https://chekiyuume.app/share/${sessionId}`)
+				: 'https://chekiyuume.app'
 		);
-		if (targetShareUrl) {
+		recordPrintLog(`[canvasRenderer] QR targetShareUrl=${targetShareUrl}`);
+
+		try {
+			// Primary method: direct toCanvas
+			const tempCanvas = document.createElement('canvas');
+			await QRCode.toCanvas(tempCanvas, targetShareUrl, {
+				width: 320,
+				margin: 1,
+				color: {
+					dark: '#000000',
+					light: '#ffffff'
+				},
+				errorCorrectionLevel: 'M'
+			});
+			if (tempCanvas && tempCanvas.width > 0) {
+				qrCanvas = tempCanvas;
+				recordPrintLog(`[canvasRenderer] QRCode.toCanvas success (${tempCanvas.width}x${tempCanvas.height})`);
+			} else {
+				throw new Error('toCanvas created empty canvas');
+			}
+		} catch (primaryErr: any) {
+			const errMsg = String(primaryErr?.message || primaryErr);
+			recordPrintLog(`[canvasRenderer] QRCode.toCanvas failed: ${errMsg}. Trying toDataURL fallback...`);
 			try {
-				const tempCanvas = document.createElement('canvas');
-				await QRCode.toCanvas(tempCanvas, targetShareUrl, {
+				const qrDataUrl = await QRCode.toDataURL(targetShareUrl, {
 					width: 320,
 					margin: 1,
-					color: {
-						dark: '#000000',
-						light: '#ffffff'
-					},
+					color: { dark: '#000000', light: '#ffffff' },
 					errorCorrectionLevel: 'M'
 				});
-				qrCanvas = tempCanvas;
-			} catch (e) {
-				console.warn('Receipt QR generation error:', e);
+				const img = await loadImage(qrDataUrl);
+				const fallbackCanvas = document.createElement('canvas');
+				fallbackCanvas.width = img.width || 320;
+				fallbackCanvas.height = img.height || 320;
+				const fctx = fallbackCanvas.getContext('2d');
+				if (fctx) {
+					fctx.drawImage(img, 0, 0);
+					qrCanvas = fallbackCanvas;
+					recordPrintLog(`[canvasRenderer] QRCode toDataURL fallback success`);
+				}
+			} catch (fallbackErr: any) {
+				qrError = String(fallbackErr?.message || fallbackErr);
+				recordPrintLog(`[canvasRenderer] CRITICAL: Both QR methods failed: ${qrError}`);
+				console.error('[canvasRenderer] All QR generation methods failed:', fallbackErr);
 			}
 		}
 	}
@@ -377,8 +420,9 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		ctx.stroke();
 		ctx.setLineDash([]);
 
-		if (options.isForPrint && qrCanvas) {
-			// Physical Print Mode: Render Scannable Download QR Code
+		if (options.isForPrint) {
+			// Physical Print Mode: Render Scannable Download QR Code (NEVER BARCODE)
+			recordPrintLog(`[canvasRenderer] Drawing Physical Print footer. qrCanvas exists=${!!qrCanvas}`);
 			ctx.textAlign = 'center';
 			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
 			ctx.letterSpacing = '1px';
@@ -389,7 +433,26 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 			const qrSize = 260;
 			const qrX = centerX - qrSize / 2;
 			const qrY = footerTop + 295;
-			ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+
+			if (qrCanvas) {
+				ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+			} else {
+				// Visual Error Catcher right on the receipt if QR failed:
+				recordPrintLog(`[canvasRenderer] Drawing QR error box: ${qrError || 'unknown'}`);
+				ctx.save();
+				ctx.fillStyle = '#f8fafc';
+				ctx.fillRect(qrX, qrY, qrSize, qrSize);
+				ctx.strokeStyle = '#dc2626';
+				ctx.lineWidth = 3;
+				ctx.strokeRect(qrX, qrY, qrSize, qrSize);
+				ctx.fillStyle = '#dc2626';
+				ctx.font = 'bold 15px "Plus Jakarta Sans", monospace';
+				ctx.fillText('⚠ QR CODE ERROR', centerX, qrY + 115);
+				ctx.font = '11px monospace';
+				ctx.fillStyle = '#475569';
+				ctx.fillText(qrError ? qrError.slice(0, 32) : 'Canvas failed', centerX, qrY + 145);
+				ctx.restore();
+			}
 
 			// Order / Session ID snippet below QR
 			ctx.font = '700 20px "Plus Jakarta Sans", monospace';

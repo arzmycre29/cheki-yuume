@@ -31,26 +31,116 @@
 	let resetInterval: NodeJS.Timeout | null = null;
 	let printCopies = $state(1);
 
-	// ── Debug Panel ──
+	// ── Debug Panel & Error Catcher ──
 	let showDebug = $state(false);
 	let debugLogs = $state<string[]>([]);
 	let debugTapCount = $state(0);
 	let debugCopied = $state(false);
+	let isRegeneratingReceipt = $state(false);
+	let isPreparingPrintModal = $state(false);
+
+	function loadAllDebugLogs() {
+		try {
+			const videoRaw = sessionStorage.getItem('chekiyuume_video_debug');
+			const printRaw = sessionStorage.getItem('chekiyuume_print_debug');
+			const vLogs: string[] = videoRaw ? JSON.parse(videoRaw) : [];
+			const pLogs: string[] = printRaw ? JSON.parse(printRaw) : [];
+			const combined = [
+				...pLogs.map((l) => `[PRINT] ${l}`),
+				...vLogs.map((l) => `[VIDEO] ${l}`)
+			];
+			debugLogs = combined.length > 0 ? combined : ['(No debug logs found)'];
+		} catch {
+			debugLogs = ['(Failed to read debug logs)'];
+		}
+	}
 
 	function handleDebugTap() {
 		debugTapCount++;
 		if (debugTapCount >= 5) {
 			debugTapCount = 0;
+			loadAllDebugLogs();
 			showDebug = !showDebug;
-			if (showDebug) {
-				try {
-					const raw = sessionStorage.getItem('chekiyuume_video_debug');
-					debugLogs = raw ? JSON.parse(raw) : ['(No debug logs found)'];
-				} catch {
-					debugLogs = ['(Failed to read debug logs)'];
+		}
+	}
+
+	async function forceRegenerateReceiptPrint() {
+		isRegeneratingReceipt = true;
+		try {
+			console.log('[Result] Force regenerating receipt print canvas...');
+			const layout = getLayoutById(session.layoutId || 'thematic-receipt-classic');
+			const basePublicUrl = settings.cloudPublicBaseUrl?.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
+			const shareTargetUrl = `${basePublicUrl}/share/${session.sessionId}`;
+			const printCanvas = await renderPhotostripCanvas({
+				layout,
+				photos: session.photos,
+				slotPhotoIds: session.assignedSlotPhotoIds || [],
+				stickers: session.stickers || [],
+				guestName: session.guestName,
+				sessionId: session.sessionId,
+				brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
+				brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
+				shareUrl: shareTargetUrl,
+				isForPrint: true
+			});
+			const printExport = exportPhotostrip(printCanvas);
+			const pBlob = await printExport.blob;
+			sessionStore.setPhotostrip(
+				session.photostripDataUrl || printExport.dataUrl,
+				session.photostripBlob || pBlob,
+				printExport.dataUrl,
+				pBlob
+			);
+			sessionStore.finalizeAndSaveSession();
+			loadAllDebugLogs();
+			alert('Berhasil meregenerasi photostrip struk dengan QR Code!');
+		} catch (err: any) {
+			console.error('[Result] Force regen error:', err);
+			alert('Gagal meregenerasi: ' + String(err?.message || err));
+		} finally {
+			isRegeneratingReceipt = false;
+		}
+	}
+
+	async function handleOpenPrintModal() {
+		const isThematic = session.mode === 'thematic' || session.layoutId?.startsWith('thematic-receipt');
+		if (isThematic) {
+			isPreparingPrintModal = true;
+			try {
+				const needsRegen = !session.printPhotostripDataUrl || session.printPhotostripDataUrl === session.photostripDataUrl;
+				if (needsRegen && session.photos && session.photos.length > 0) {
+					console.log('[Result] Ensuring fresh receipt print canvas with QR before opening print dialog...');
+					const layout = getLayoutById(session.layoutId || 'thematic-receipt-classic');
+					const basePublicUrl = settings.cloudPublicBaseUrl?.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
+					const shareTargetUrl = `${basePublicUrl}/share/${session.sessionId}`;
+					const printCanvas = await renderPhotostripCanvas({
+						layout,
+						photos: session.photos,
+						slotPhotoIds: session.assignedSlotPhotoIds || [],
+						stickers: session.stickers || [],
+						guestName: session.guestName,
+						sessionId: session.sessionId,
+						brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
+						brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
+						shareUrl: shareTargetUrl,
+						isForPrint: true
+					});
+					const printExport = exportPhotostrip(printCanvas);
+					const pBlob = await printExport.blob;
+					sessionStore.setPhotostrip(
+						session.photostripDataUrl || printExport.dataUrl,
+						session.photostripBlob || pBlob,
+						printExport.dataUrl,
+						pBlob
+					);
 				}
+			} catch (err) {
+				console.error('[Result] handleOpenPrintModal error:', err);
+			} finally {
+				isPreparingPrintModal = false;
 			}
 		}
+		isPrintModalOpen = true;
 	}
 
 	async function copyDebugLogs() {
@@ -235,17 +325,29 @@
 			</div>
 			<div>
 				<h1 class="text-xs sm:text-base font-black text-white font-display leading-tight">Sesi Foto Selesai!</h1>
-				<!-- Tap 5x on session ID to open debug panel -->
-				<button
-					type="button"
-					class="text-left text-[9px] sm:text-xs text-zinc-400 leading-tight cursor-pointer select-none bg-transparent border-none p-0"
-					onclick={handleDebugTap}
-				>
-					Tamu: <strong class="text-rose-400">{session.guestName || 'Tamu'}</strong> [{session.sessionId.slice(-6)}]
-					{#if debugTapCount > 0 && debugTapCount < 5}
-						<span class="text-zinc-600 text-[8px]">({debugTapCount}/5)</span>
-					{/if}
-				</button>
+				<div class="flex items-center gap-1.5">
+					<button
+						type="button"
+						class="text-left text-[9px] sm:text-xs text-zinc-400 leading-tight cursor-pointer select-none bg-transparent border-none p-0"
+						onclick={handleDebugTap}
+					>
+						Tamu: <strong class="text-rose-400">{session.guestName || 'Tamu'}</strong> [{session.sessionId.slice(-6)}]
+						{#if debugTapCount > 0 && debugTapCount < 5}
+							<span class="text-zinc-600 text-[8px]">({debugTapCount}/5)</span>
+						{/if}
+					</button>
+					<button
+						type="button"
+						onclick={() => {
+							loadAllDebugLogs();
+							showDebug = true;
+						}}
+						class="px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-white border border-zinc-700/80 cursor-pointer transition-colors"
+						title="Buka Log Diagnostik & Error Catcher"
+					>
+						🐛 Debug
+					</button>
+				</div>
 			</div>
 		</div>
 
@@ -345,11 +447,12 @@
 				<!-- Print Button -->
 				<button
 					type="button"
-					onclick={() => (isPrintModalOpen = true)}
-					class="w-full flex items-center justify-center gap-1.5 rounded-lg sm:rounded-xl bg-gradient-to-r from-indigo-500 to-rose-500 py-1.5 sm:py-2 px-2 sm:px-3 text-[11px] sm:text-xs font-black text-white shadow-md active:scale-95 transition-all cursor-pointer"
+					onclick={handleOpenPrintModal}
+					disabled={isPreparingPrintModal}
+					class="w-full flex items-center justify-center gap-1.5 rounded-lg sm:rounded-xl bg-gradient-to-r from-indigo-500 to-rose-500 py-1.5 sm:py-2 px-2 sm:px-3 text-[11px] sm:text-xs font-black text-white shadow-md active:scale-95 transition-all cursor-pointer disabled:opacity-50"
 				>
 					<Printer class="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-					<span>Cetak Foto Fisik</span>
+					<span>{isPreparingPrintModal ? 'Menyiapkan QR Struk...' : 'Cetak Foto Fisik'}</span>
 				</button>
 
 				<!-- Download Photo -->
@@ -388,23 +491,38 @@
 	</div>
 </div>
 
-<!-- Debug Log Panel (tap Session ID 5x to open) -->
+<!-- Debug Log Panel & Error Catcher -->
 {#if showDebug}
 	<div class="fixed inset-0 z-50 flex items-end justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm">
-		<div class="w-full max-w-2xl bg-zinc-950 border border-zinc-700 rounded-2xl shadow-2xl flex flex-col max-h-[80vh] overflow-hidden">
+		<div class="w-full max-w-2xl bg-zinc-950 border border-zinc-700 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
 			<!-- Header -->
 			<div class="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
 				<div>
-					<p class="text-white font-bold text-sm">🐛 Debug Log — Video Compilation</p>
-					<p class="text-zinc-500 text-[10px] mt-0.5">Bagikan log ini ke developer untuk diagnosis</p>
+					<p class="text-white font-bold text-sm flex items-center gap-2">
+						<span>🐛 Diagnostik & Error Catcher</span>
+						<span class="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 font-mono">
+							{session.mode} | {session.layoutId}
+						</span>
+					</p>
+					<p class="text-zinc-500 text-[10px] mt-0.5">Log proses render foto, compile video & struk QR</p>
 				</div>
 				<div class="flex items-center gap-2">
+					{#if session.mode === 'thematic' || session.layoutId?.startsWith('thematic-receipt')}
+						<button
+							type="button"
+							onclick={forceRegenerateReceiptPrint}
+							disabled={isRegeneratingReceipt}
+							class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+						>
+							{isRegeneratingReceipt ? 'Memproses...' : '🔄 Paksa QR Struk'}
+						</button>
+					{/if}
 					<button
 						type="button"
 						onclick={copyDebugLogs}
 						class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors cursor-pointer"
 					>
-						{debugCopied ? '✓ Disalin!' : '📋 Salin Semua'}
+						{debugCopied ? '✓ Disalin!' : '📋 Salin'}
 					</button>
 					<button
 						type="button"
@@ -415,6 +533,18 @@
 					</button>
 				</div>
 			</div>
+			<!-- Diagnostic Status Badges -->
+			<div class="px-4 py-2 bg-zinc-900 border-b border-zinc-800 text-[10px] text-zinc-400 flex flex-wrap gap-2 items-center">
+				<span class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">
+					Print Strip: <strong class={session.printPhotostripDataUrl ? 'text-emerald-400' : 'text-rose-400'}>{session.printPhotostripDataUrl ? 'Tersedia' : 'Kosong'}</strong>
+				</span>
+				<span class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">
+					Panjang Print: <strong>{session.printPhotostripDataUrl?.length ?? 0} char</strong>
+				</span>
+				<span class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">
+					Sama dgn Digital: <strong class={session.printPhotostripDataUrl === session.photostripDataUrl ? 'text-amber-400' : 'text-emerald-400'}>{session.printPhotostripDataUrl === session.photostripDataUrl ? 'Ya (Potensi Barcode)' : 'Tidak (Unik/QR)'}</strong>
+				</span>
+			</div>
 			<!-- Log Lines -->
 			<div class="overflow-y-auto flex-1 p-3 font-mono text-[10px] leading-relaxed space-y-0.5">
 				{#if debugLogs.length === 0}
@@ -422,7 +552,7 @@
 				{:else}
 					{#each debugLogs as line}
 						<div
-							class="px-2 py-0.5 rounded {line.includes('ERROR') ? 'text-red-400 bg-red-950/30' : line.includes('success') ? 'text-emerald-400 bg-emerald-950/20' : 'text-zinc-300'}"
+							class="px-2 py-0.5 rounded {line.includes('ERROR') || line.includes('CRITICAL') || line.includes('failed') ? 'text-red-400 bg-red-950/30' : line.includes('success') || line.includes('SUCCESS') || line.includes('OK') ? 'text-emerald-400 bg-emerald-950/20' : 'text-zinc-300'}"
 						>
 							{line}
 						</div>

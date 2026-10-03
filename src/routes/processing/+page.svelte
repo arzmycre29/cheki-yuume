@@ -78,26 +78,36 @@
 			let printBlob = digitalBlob;
 
 			// 1b. Physical Print Photostrip (isForPrint: true -> Scannable QR code specifically on printed paper)
-			if (layout.id.startsWith('thematic-receipt')) {
-				const printCanvas = await renderPhotostripCanvas({
-					layout,
-					photos: currentSession.photos,
-					slotPhotoIds: currentSession.assignedSlotPhotoIds || [],
-					stickers: currentSession.stickers || [],
-					guestName: currentSession.guestName,
-					sessionId: currentSession.sessionId,
-					brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
-					brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
-					shareUrl: shareTargetUrl,
-					isForPrint: true
-				});
-				const printExport = exportPhotostrip(printCanvas);
-				printDataUrl = printExport.dataUrl;
-				printBlob = await printExport.blob;
+			const isReceiptMode = layout.id.startsWith('thematic-receipt') || currentSession.mode === 'thematic';
+			if (isReceiptMode) {
+				logDebug('Stage 1b: Rendering receipt physical print canvas (QR Mode)...');
+				try {
+					const printCanvas = await renderPhotostripCanvas({
+						layout,
+						photos: currentSession.photos,
+						slotPhotoIds: currentSession.assignedSlotPhotoIds || [],
+						stickers: currentSession.stickers || [],
+						guestName: currentSession.guestName,
+						sessionId: currentSession.sessionId,
+						brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
+						brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
+						shareUrl: shareTargetUrl,
+						isForPrint: true
+					});
+					const printExport = exportPhotostrip(printCanvas);
+					printDataUrl = printExport.dataUrl;
+					printBlob = await printExport.blob;
+					logDebug('Stage 1b: SUCCESS! Print canvas rendered. DataUrl length:', printDataUrl.length);
+				} catch (printErr: any) {
+					logDebug('Stage 1b ERROR rendering print canvas:', String(printErr?.message || printErr));
+					console.error('[Processing] Stage 1b Print canvas error:', printErr);
+				}
+			} else {
+				logDebug('Stage 1b: Skipped (not receipt mode, layoutId=' + layout.id + ', mode=' + currentSession.mode + ')');
 			}
 
 			sessionStore.setPhotostrip(digitalDataUrl, digitalBlob, printDataUrl, printBlob);
-			logDebug('Photostrip rendered OK, digital dataUrl length:', digitalDataUrl.length);
+			logDebug('Photostrip saved: digitalLen=' + digitalDataUrl.length + ', printLen=' + printDataUrl.length + ', isIdentical=' + (digitalDataUrl === printDataUrl));
 
 			// Stage 2: Compile Sequential Videostrip (WebCodecs MP4 with graceful fallback)
 			try {

@@ -154,6 +154,12 @@
 		isPrinting = true;
 		try {
 			printOptions.layoutCategory = layoutCategory;
+			try {
+				const existing = JSON.parse(sessionStorage.getItem('chekiyuume_print_debug') || '[]');
+				existing.push(`[${new Date().toISOString().slice(11, 23)}] [PrintModal] Starting executePrint: paperSize=${printOptions.paperSize}, copies=${printOptions.copies}, dataUrlLength=${photostripDataUrl?.length ?? 0}`);
+				sessionStorage.setItem('chekiyuume_print_debug', JSON.stringify(existing.slice(-100)));
+			} catch (_) {}
+
 			const success = await executePrint(photostripDataUrl, printOptions, isPortraitStrip);
 			if (success) {
 				if (onPrintSuccess) {
@@ -162,8 +168,15 @@
 					sessionStore.incrementPrintCount();
 				}
 			}
-		} catch (err) {
+		} catch (err: any) {
+			const errMsg = String(err?.message || err);
 			console.error('[PrintModal] Print execution error:', err);
+			try {
+				const existing = JSON.parse(sessionStorage.getItem('chekiyuume_print_debug') || '[]');
+				existing.push(`[${new Date().toISOString().slice(11, 23)}] [PrintModal] ERROR: ${errMsg}`);
+				sessionStorage.setItem('chekiyuume_print_debug', JSON.stringify(existing.slice(-100)));
+			} catch (_) {}
+			alert('Gagal membuka dialog cetak: ' + errMsg);
 		} finally {
 			isPrinting = false;
 			onClose();
