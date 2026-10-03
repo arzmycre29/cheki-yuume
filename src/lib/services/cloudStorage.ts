@@ -958,7 +958,8 @@ export async function backupAllSessionsToCloudinary(
  * Retrieves all sessions from Cloudinary sessions_manifest.json with multiple URL fallbacks
  */
 export async function retrieveSessionsFromCloudinary(
-	cloudName: string
+	cloudName: string,
+	pin?: string
 ): Promise<{ success: boolean; sessions: CloudSessionSummary[]; count: number; error?: string }> {
 	try {
 		const cleanCloud = cloudName.trim();
@@ -966,11 +967,23 @@ export async function retrieveSessionsFromCloudinary(
 			throw new Error('Cloud Name Cloudinary belum diatur.');
 		}
 
+		let adminPin = pin || '1234';
+		if (!pin && typeof localStorage !== 'undefined') {
+			try {
+				const raw = localStorage.getItem('chekiyuume_settings');
+				if (raw) {
+					const parsed = JSON.parse(raw);
+					if (parsed?.adminPin) adminPin = parsed.adminPin;
+				}
+			} catch (_) {}
+		}
+
 		console.log(`[CloudRetrieve] Starting retrieval of sessions manifest from Cloudinary: "${cleanCloud}"...`);
 
 		// Try multiple URL variants to overcome Cloudinary raw naming discrepancies & versions
+		const pinQuery = `&pin=${encodeURIComponent(adminPin)}`;
 		const candidateUrls: string[] = [
-			`/api/manifest?type=sessions&_t=${Date.now()}`,
+			`/api/manifest?type=sessions${pinQuery}&_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest?_t=${Date.now()}`,

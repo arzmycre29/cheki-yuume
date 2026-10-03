@@ -52,31 +52,29 @@
 			try {
 				console.log(`[Share] Attempt ${attempt}/${maxRetries}: Checking cloud manifest for session "${sId}"...`);
 
-				// 1. Try /api/manifest?type=sessions (Cloudflare Pages Function direct query)
+				// 1. Safe query to /api/manifest?type=sessions&id=... (Server filters ONLY this session)
 				try {
-					const res = await fetch(`/api/manifest?type=sessions&_t=${Date.now()}`, {
+					const res = await fetch(`/api/manifest?type=sessions&id=${encodeURIComponent(sId)}&_t=${Date.now()}`, {
 						cache: 'no-store',
 						headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
 					});
 					if (res.ok) {
 						const data = await res.json();
-						if (data && Array.isArray(data.sessions)) {
-							const found = data.sessions.find((s: any) => s.sessionId === sId);
-							if (found && (found.photoUrl || found.videoUrl)) {
-								cloudPhotoUrl = found.photoUrl || null;
-								cloudVideoUrl = found.videoUrl || null;
-								cloudGuestName = found.guestName || null;
-								syncStatus = 'found';
-								console.log('[Share] ✓ Session media found in /api/manifest:', found);
-								return true;
-							}
+						const found = data?.session;
+						if (found && (found.photoUrl || found.videoUrl)) {
+							cloudPhotoUrl = found.photoUrl || null;
+							cloudVideoUrl = found.videoUrl || null;
+							cloudGuestName = found.guestName || null;
+							syncStatus = 'found';
+							console.log('[Share] ✓ Session media found in /api/manifest:', found);
+							return true;
 						}
 					}
 				} catch (apiErr) {
 					console.warn('[Share] /api/manifest fetch warning:', apiErr);
 				}
 
-				// 2. Try direct Cloudinary sessions_manifest.json public fetch
+				// 2. Direct per-session candidate lookup on Cloudinary (no global list leakage)
 				let cloudName = 'qhdvucyw';
 				try {
 					const cfgRes = await fetch('/api/config');
@@ -87,9 +85,7 @@
 				} catch (_) {}
 
 				const candidateUrls = [
-					`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
-					`https://res.cloudinary.com/${cloudName}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
-					`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions/${sId}/manifest.json?_t=${Date.now()}`
+					`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions/${encodeURIComponent(sId)}/manifest.json?_t=${Date.now()}`
 				];
 
 				for (const cUrl of candidateUrls) {
@@ -97,25 +93,12 @@
 						const cRes = await fetch(cUrl, { cache: 'no-store' });
 						if (cRes.ok) {
 							const cJson = await cRes.json();
-							// Case A: Array of sessions
-							if (cJson && Array.isArray(cJson.sessions)) {
-								const found = cJson.sessions.find((s: any) => s.sessionId === sId);
-								if (found && (found.photoUrl || found.videoUrl)) {
-									cloudPhotoUrl = found.photoUrl || null;
-									cloudVideoUrl = found.videoUrl || null;
-									cloudGuestName = found.guestName || null;
-									syncStatus = 'found';
-									console.log('[Share] ✓ Session media found in direct Cloudinary manifest:', found);
-									return true;
-								}
-							}
-							// Case B: Single session manifest
-							if (cJson && cJson.sessionId === sId && (cJson.photoUrl || cJson.videoUrl)) {
+							if (cJson && (cJson.sessionId === sId || !cJson.sessionId) && (cJson.photoUrl || cJson.videoUrl)) {
 								cloudPhotoUrl = cJson.photoUrl || null;
 								cloudVideoUrl = cJson.videoUrl || null;
 								cloudGuestName = cJson.guestName || null;
 								syncStatus = 'found';
-								console.log('[Share] ✓ Single session manifest found:', cJson);
+								console.log('[Share] ✓ Per-session manifest found:', cJson);
 								return true;
 							}
 						}
@@ -128,7 +111,8 @@
 
 			if (attempt < maxRetries) {
 				syncStatus = 'retrying';
-				await new Promise((r) => setTimeout(r, 2000));
+				const delay = attempt === 1 ? 2500 : 3500;
+				await new Promise((r) => setTimeout(r, delay));
 			}
 		}
 

@@ -14,7 +14,20 @@ export function generateSessionId(): string {
 	const h = pad(now.getHours());
 	const min = pad(now.getMinutes());
 	const s = pad(now.getSeconds());
-	const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+
+	const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+	let rand = '';
+	if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+		const bytes = new Uint8Array(8);
+		crypto.getRandomValues(bytes);
+		for (let i = 0; i < 8; i++) {
+			rand += chars[bytes[i] % chars.length];
+		}
+	} else {
+		for (let i = 0; i < 8; i++) {
+			rand += chars[Math.floor(Math.random() * chars.length)];
+		}
+	}
 	return `CKY-${y}${m}${d}-${h}${min}${s}-${rand}`;
 }
 

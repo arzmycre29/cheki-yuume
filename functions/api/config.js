@@ -37,7 +37,6 @@ export async function onRequestGet(context) {
 		JSON.stringify({
 			success: true,
 			hasCustomPin: Boolean(adminPin && adminPin !== '1234'),
-			adminPin: adminPin || null,
 			cloudinaryCloudName: cloudName
 		}),
 		{

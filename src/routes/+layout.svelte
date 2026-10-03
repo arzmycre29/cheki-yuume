@@ -35,12 +35,12 @@
 		// Initialize real-time network detection & auto-switching
 		initNetworkMonitor();
 
-		// Dynamically sync admin PIN from Cloudflare Pages environment if online
+		// Dynamically sync cloud config from Cloudflare Pages environment if online
 		fetch('/api/config')
 			.then((res) => (res.ok ? res.json() : null))
 			.then((data) => {
-				if (data && data.adminPin) {
-					settingsStore.updateSettings({ adminPin: data.adminPin });
+				if (data?.cloudinaryCloudName && !$settingsStore.cloudinaryCloudName) {
+					settingsStore.updateSettings({ cloudinaryCloudName: data.cloudinaryCloudName });
 				}
 			})
 			.catch(() => {});
@@ -88,13 +88,17 @@
 			return;
 		}
 
-		// Also check live against /api/config in case store hasn't synced yet
+		// Also check live against /api/verify-pin in case store hasn't synced yet
 		try {
-			const res = await fetch('/api/config');
+			const res = await fetch('/api/verify-pin', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ pin: input })
+			});
 			if (res.ok) {
 				const data = await res.json();
-				if (data && data.adminPin && input === String(data.adminPin).trim()) {
-					settingsStore.updateSettings({ adminPin: data.adminPin });
+				if (data && data.valid) {
+					settingsStore.updateSettings({ adminPin: input });
 					showPinModal = false;
 					pinInput = '';
 					pinError = '';

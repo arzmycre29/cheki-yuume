@@ -127,13 +127,17 @@
 			return;
 		}
 
-		// Also check live against /api/config in case store hasn't synced yet
+		// Also check live against /api/verify-pin in case store hasn't synced yet
 		try {
-			const res = await fetch('/api/config');
+			const res = await fetch('/api/verify-pin', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ pin: input })
+			});
 			if (res.ok) {
 				const data = await res.json();
-				if (data && data.adminPin && input === String(data.adminPin).trim()) {
-					settingsStore.updateSettings({ adminPin: data.adminPin });
+				if (data && data.valid) {
+					settingsStore.updateSettings({ adminPin: input });
 					showAdminPinModal = false;
 					adminPinInput = '';
 					adminPinError = '';
