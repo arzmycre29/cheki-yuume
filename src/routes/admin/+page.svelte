@@ -140,9 +140,9 @@
 			navigator.mediaDevices.addEventListener('devicechange', refreshCameras);
 		}
 
-		// Auto-sync frames & sessions from Cloudinary on mount if configured
+		// Auto-sync custom frames from Cloudinary on mount if configured
 		if (formSettings.cloudProvider === 'cloudinary' && formSettings.cloudinaryCloudName?.trim()) {
-			console.log(`[AdminMount] Auto-syncing from Cloudinary (cloud: "${formSettings.cloudinaryCloudName}")...`);
+			console.log(`[AdminMount] Auto-syncing custom frames from Cloudinary (cloud: "${formSettings.cloudinaryCloudName}")...`);
 			try {
 				const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
 				if (res.success) {
@@ -153,80 +153,6 @@
 				}
 			} catch (frameErr) {
 				console.warn('[AdminMount] Custom frames auto-sync error:', frameErr);
-			}
-
-			try {
-				const sessionRes = await retrieveSessionsFromCloudinary(formSettings.cloudinaryCloudName);
-				console.log('[AdminMount] retrieveSessionsFromCloudinary result:', sessionRes);
-				if (sessionRes.success && sessionRes.sessions.length > 0) {
-					const cur = await getAllSessionsFromDB();
-					const existingMap = new Map(cur.map((s) => [s.sessionId, s]));
-					let changed = false;
-					for (const cs of sessionRes.sessions) {
-						const existing = existingMap.get(cs.sessionId);
-						const count = cs.photosCount || (cs.layoutId?.includes('1') ? 1 : cs.layoutId?.includes('2') ? 2 : 4);
-						if (!existing) {
-							await saveSessionToDB({
-								sessionId: cs.sessionId,
-								guestName: cs.guestName || '',
-								createdAt: cs.createdAt || Date.now(),
-								mode: (cs.mode as any) || 'default',
-								layoutId: cs.layoutId || 'default-4-classic',
-								photos: Array.from({ length: count }).map((_, idx) => ({
-									id: `cloud-${cs.sessionId}-${idx}`,
-									index: idx,
-									dataUrl: '',
-									blob: undefined,
-									timestamp: cs.createdAt || Date.now()
-								})),
-								photosCount: count,
-								assignedSlotPhotoIds: [],
-								stickers: [],
-								photostripDataUrl: cs.photoUrl || '',
-								photostripBlob: null,
-								videostripBlob: null,
-								videostripUrl: cs.videoUrl || null,
-								printCount: cs.printCount || 0,
-								cloudUploadStatus: 'success',
-								cloudPhotoUrl: cs.photoUrl || null,
-								cloudVideoUrl: cs.videoUrl || null,
-								cloudShareUrl: cs.shareUrl || null,
-								isOfflineSaved: true
-							});
-							changed = true;
-						} else {
-							let updated = false;
-							if (cs.photoUrl && !existing.photostripDataUrl && !existing.cloudPhotoUrl) {
-								existing.photostripDataUrl = cs.photoUrl;
-								existing.cloudPhotoUrl = cs.photoUrl;
-								if (cs.videoUrl && !existing.videostripUrl) existing.videostripUrl = cs.videoUrl;
-								if (cs.shareUrl && !existing.cloudShareUrl) existing.cloudShareUrl = cs.shareUrl;
-								updated = true;
-							}
-							if ((!existing.photos || existing.photos.length === 0) && (!existing.photosCount || existing.photosCount === 0)) {
-								existing.photosCount = count;
-								existing.photos = Array.from({ length: count }).map((_, idx) => ({
-									id: `cloud-${cs.sessionId}-${idx}`,
-									index: idx,
-									dataUrl: '',
-									blob: undefined,
-									timestamp: cs.createdAt || Date.now()
-								}));
-								updated = true;
-							}
-							if (updated) {
-								await saveSessionToDB(existing);
-								changed = true;
-							}
-						}
-					}
-					if (changed) {
-						console.log('[AdminMount] Database updated with remote cloud sessions. Refreshing list...');
-						await loadSessions();
-					}
-				}
-			} catch (sessErr) {
-				console.warn('[AdminMount] Sessions auto-sync error:', sessErr);
 			}
 		}
 	});
@@ -674,8 +600,9 @@
 			// 3. Save or update remaining active sessions into local DB
 			let addedCount = 0;
 			let updatedCount = 0;
+			const finalActiveSessions = activeSessions.filter((s) => !deletedIdSet.has(s.sessionId));
 
-			for (const cs of activeSessions) {
+			for (const cs of finalActiveSessions) {
 				const existing = existingMap.get(cs.sessionId);
 				const count = cs.photosCount || (cs.layoutId?.includes('1') ? 1 : cs.layoutId?.includes('2') ? 2 : 4);
 				if (!existing) {
@@ -746,7 +673,7 @@
 			if (deletedIdSet.size > 0 && formSettings.cloudinaryUploadPreset?.trim()) {
 				console.log(`[AdminSync] Pruning ${deletedIdSet.size} deleted sessions from global Cloudinary manifest...`);
 				await updateGlobalSessionsManifestInCloudinary(
-					activeSessions,
+					finalActiveSessions,
 					formSettings.cloudinaryCloudName,
 					formSettings.cloudinaryUploadPreset
 				);

@@ -982,7 +982,20 @@ export async function retrieveSessionsFromCloudinary(
 
 		// Try multiple URL variants to overcome Cloudinary raw naming discrepancies & versions
 		const pinQuery = `&pin=${encodeURIComponent(adminPin)}`;
-		const candidateUrls: string[] = [
+		const candidateUrls: string[] = [];
+
+		if (typeof localStorage !== 'undefined') {
+			const cachedUrl = localStorage.getItem('cheki_last_sessions_manifest_url');
+			if (cachedUrl) {
+				const separator = cachedUrl.includes('?') ? '&' : '?';
+				candidateUrls.push(`${cachedUrl}${separator}_t=${Date.now()}`);
+				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
+				const uSep = unversionedCached.includes('?') ? '&' : '?';
+				candidateUrls.push(`${unversionedCached}${uSep}_t=${Date.now()}`);
+			}
+		}
+
+		candidateUrls.push(
 			`/api/manifest?type=sessions${pinQuery}&_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
@@ -991,16 +1004,7 @@ export async function retrieveSessionsFromCloudinary(
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/sessions_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/sessions_manifest.json?_t=${Date.now()}`,
 			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json.json?_t=${Date.now()}`
-		];
-
-		if (typeof localStorage !== 'undefined') {
-			const cachedUrl = localStorage.getItem('cheki_last_sessions_manifest_url');
-			if (cachedUrl) {
-				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
-				const separator = unversionedCached.includes('?') ? '&' : '?';
-				candidateUrls.push(`${unversionedCached}${separator}_t=${Date.now()}`);
-			}
-		}
+		);
 
 		let data: any = null;
 		let lastStatus = 0;
