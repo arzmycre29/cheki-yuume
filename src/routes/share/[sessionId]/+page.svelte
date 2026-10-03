@@ -14,7 +14,9 @@
 		Loader2,
 		QrCode,
 		FolderDown,
-		Check
+		Check,
+		RotateCcw,
+		AlertCircle
 	} from '@lucide/svelte';
 
 	let sessionId = $derived(page.params.sessionId);
@@ -23,6 +25,12 @@
 	let queryName = $derived(page.url.searchParams.get('n') || page.url.searchParams.get('name'));
 
 	let session = $state<SessionData | null>(null);
+	let cloudPhotoUrl = $state<string | null>(null);
+	let cloudVideoUrl = $state<string | null>(null);
+	let cloudGuestName = $state<string | null>(null);
+	let syncStatus = $state<'idle' | 'checking' | 'retrying' | 'found' | 'not-found'>('idle');
+	let syncAttempt = $state(0);
+
 	let isLoading = $state(true);
 	let isDownloadingPhoto = $state(false);
 	let isDownloadingVideo = $state(false);
@@ -31,17 +39,114 @@
 	let downloadAllProgress = $state('');
 	let qrCodeDataUrl = $state<string | null>(null);
 
-	let effectivePhotoUrl = $derived(queryPhoto || session?.cloudPhotoUrl || session?.photostripDataUrl);
-	let effectiveVideoUrl = $derived(queryVideo || session?.cloudVideoUrl || session?.videostripUrl);
-	let effectiveGuestName = $derived(queryName || session?.guestName || 'Tamu Istimewa');
+	let effectivePhotoUrl = $derived(queryPhoto || session?.cloudPhotoUrl || session?.photostripDataUrl || cloudPhotoUrl);
+	let effectiveVideoUrl = $derived(queryVideo || session?.cloudVideoUrl || session?.videostripUrl || cloudVideoUrl);
+	let effectiveGuestName = $derived(queryName || session?.guestName || cloudGuestName || 'Tamu Istimewa');
 	let hasMedia = $derived(Boolean(effectivePhotoUrl || effectiveVideoUrl));
+
+	async function fetchCloudSessionData(sId: string, maxRetries = 3): Promise<boolean> {
+		syncStatus = 'checking';
+
+		for (let attempt = 1; attempt <= maxRetries; attempt++) {
+			syncAttempt = attempt;
+			try {
+				console.log(`[Share] Attempt ${attempt}/${maxRetries}: Checking cloud manifest for session "${sId}"...`);
+
+				// 1. Try /api/manifest?type=sessions (Cloudflare Pages Function direct query)
+				try {
+					const res = await fetch(`/api/manifest?type=sessions&_t=${Date.now()}`, {
+						cache: 'no-store',
+						headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
+					});
+					if (res.ok) {
+						const data = await res.json();
+						if (data && Array.isArray(data.sessions)) {
+							const found = data.sessions.find((s: any) => s.sessionId === sId);
+							if (found && (found.photoUrl || found.videoUrl)) {
+								cloudPhotoUrl = found.photoUrl || null;
+								cloudVideoUrl = found.videoUrl || null;
+								cloudGuestName = found.guestName || null;
+								syncStatus = 'found';
+								console.log('[Share] ✓ Session media found in /api/manifest:', found);
+								return true;
+							}
+						}
+					}
+				} catch (apiErr) {
+					console.warn('[Share] /api/manifest fetch warning:', apiErr);
+				}
+
+				// 2. Try direct Cloudinary sessions_manifest.json public fetch
+				let cloudName = 'qhdvucyw';
+				try {
+					const cfgRes = await fetch('/api/config');
+					if (cfgRes.ok) {
+						const cfg = await cfgRes.json();
+						if (cfg?.cloudinaryCloudName) cloudName = cfg.cloudinaryCloudName;
+					}
+				} catch (_) {}
+
+				const candidateUrls = [
+					`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
+					`https://res.cloudinary.com/${cloudName}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
+					`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions/${sId}/manifest.json?_t=${Date.now()}`
+				];
+
+				for (const cUrl of candidateUrls) {
+					try {
+						const cRes = await fetch(cUrl, { cache: 'no-store' });
+						if (cRes.ok) {
+							const cJson = await cRes.json();
+							// Case A: Array of sessions
+							if (cJson && Array.isArray(cJson.sessions)) {
+								const found = cJson.sessions.find((s: any) => s.sessionId === sId);
+								if (found && (found.photoUrl || found.videoUrl)) {
+									cloudPhotoUrl = found.photoUrl || null;
+									cloudVideoUrl = found.videoUrl || null;
+									cloudGuestName = found.guestName || null;
+									syncStatus = 'found';
+									console.log('[Share] ✓ Session media found in direct Cloudinary manifest:', found);
+									return true;
+								}
+							}
+							// Case B: Single session manifest
+							if (cJson && cJson.sessionId === sId && (cJson.photoUrl || cJson.videoUrl)) {
+								cloudPhotoUrl = cJson.photoUrl || null;
+								cloudVideoUrl = cJson.videoUrl || null;
+								cloudGuestName = cJson.guestName || null;
+								syncStatus = 'found';
+								console.log('[Share] ✓ Single session manifest found:', cJson);
+								return true;
+							}
+						}
+					} catch (_) {}
+				}
+
+			} catch (err) {
+				console.warn(`[Share] Attempt ${attempt} failed:`, err);
+			}
+
+			if (attempt < maxRetries) {
+				syncStatus = 'retrying';
+				await new Promise((r) => setTimeout(r, 2000));
+			}
+		}
+
+		syncStatus = 'not-found';
+		return false;
+	}
 
 	onMount(async () => {
 		if (sessionId) {
 			try {
 				session = await getSessionFromDB(sessionId);
 			} catch (e) {
-				console.warn('[Share] No local IndexedDB session found, relying on query params / cloud:', e);
+				console.warn('[Share] No local IndexedDB session found, checking cloud...', e);
+			}
+
+			// If local DB didn't have media (e.g. anonymous visitor on mobile), fetch from Cloud!
+			if (!session?.photostripDataUrl && !session?.cloudPhotoUrl && !queryPhoto) {
+				await fetchCloudSessionData(sessionId);
 			}
 		}
 
@@ -55,6 +160,17 @@
 
 		isLoading = false;
 	});
+
+	async function handleRetrySync() {
+		if (!sessionId) return;
+		isLoading = true;
+		try {
+			await fetchCloudSessionData(sessionId, 3);
+		} finally {
+			isLoading = false;
+		}
+	}
+
 
 	async function triggerDirectDownload(url: string, filename: string): Promise<void> {
 		if (url.startsWith('data:')) {
@@ -185,10 +301,15 @@
 		</p>
 	</header>
 
-	{#if isLoading}
-		<div class="flex flex-col items-center justify-center my-16 text-zinc-500">
-			<span class="h-6 w-6 rounded-full border-2 border-rose-500 border-t-transparent animate-spin mb-3"></span>
-			<span class="text-xs font-semibold">Memuat berkas sesi...</span>
+	{#if isLoading || syncStatus === 'checking' || syncStatus === 'retrying'}
+		<div class="flex flex-col items-center justify-center my-16 text-zinc-400 text-center max-w-xs">
+			<span class="h-8 w-8 rounded-full border-2 border-rose-500 border-t-transparent animate-spin mb-4"></span>
+			<span class="text-sm font-bold text-white">
+				{syncStatus === 'retrying' ? `Menyinkronkan berkas dari cloud (${syncAttempt}/3)...` : 'Memuat galeri foto & video...'}
+			</span>
+			<span class="text-xs text-zinc-400 mt-1">
+				Mohon tunggu sebentar, foto & video kamu sedang disiapkan langsung dari server cloud.
+			</span>
 		</div>
 	{:else if hasMedia}
 		<main class="flex flex-col items-center w-full max-w-lg gap-6">
@@ -340,11 +461,25 @@
 			<div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/20 text-amber-400 mb-4">
 				<Clock class="h-7 w-7" />
 			</div>
-			<h2 class="text-xl font-bold text-white font-display">Sesi Telah Terdaftar</h2>
+			<h2 class="text-xl font-bold text-white font-display">Berkas Sedang Diproses</h2>
 			<p class="text-xs text-zinc-400 mt-2 leading-relaxed">
 				ID Sesi: <strong class="text-rose-400">{sessionId}</strong><br />
-				Jika kamu baru saja berfoto di kiosk lokal, hubungi operator booth dengan menyebutkan ID Sesi di atas untuk mengambil berkas digital fotomu.
+				Kiosk photobooth sedang mengunggah atau menyelesaikan berkas fotomu ke cloud. Halaman galeri ini bebas diakses tanpa perlu login admin.
 			</p>
+
+			<div class="mt-6 flex flex-col gap-2">
+				<button
+					type="button"
+					onclick={handleRetrySync}
+					class="w-full flex items-center justify-center gap-2 rounded-2xl bg-rose-500 hover:bg-rose-600 py-3.5 px-6 text-sm font-bold text-white shadow-lg shadow-rose-500/25 active:scale-98 transition-all cursor-pointer"
+				>
+					<RotateCcw class="h-4 w-4" />
+					<span>Cek Ulang Berkas Sekarang</span>
+				</button>
+				<p class="text-[10px] text-zinc-500 mt-1">
+					Jika setelah beberapa saat berkas belum muncul, kamu bisa menghubungi operator booth dengan menyebutkan ID Sesi di atas.
+				</p>
+			</div>
 		</div>
 	{/if}
 

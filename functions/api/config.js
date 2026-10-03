@@ -27,11 +27,18 @@ export async function onRequestGet(context) {
 		env.PIN ||
 		'';
 
+	const cloudName =
+		env.PUBLIC_CLOUDINARY_CLOUD_NAME ||
+		env.CLOUDINARY_CLOUD_NAME ||
+		env.VITE_CLOUDINARY_CLOUD_NAME ||
+		'qhdvucyw';
+
 	return new Response(
 		JSON.stringify({
 			success: true,
 			hasCustomPin: Boolean(adminPin && adminPin !== '1234'),
-			adminPin: adminPin || null
+			adminPin: adminPin || null,
+			cloudinaryCloudName: cloudName
 		}),
 		{
 			status: 200,
