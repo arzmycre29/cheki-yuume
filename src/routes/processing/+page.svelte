@@ -54,6 +54,9 @@
 			statusMessage = 'Merender Photostrip Resolusi Tinggi (300-540 DPI)...';
 			progressPercent = 25;
 
+			const basePublicUrl = settings.cloudPublicBaseUrl?.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
+			const shareTargetUrl = `${basePublicUrl}/share/${currentSession.sessionId}`;
+
 			const canvas = await renderPhotostripCanvas({
 				layout,
 				photos: currentSession.photos,
@@ -62,7 +65,8 @@
 				guestName: currentSession.guestName,
 				sessionId: currentSession.sessionId,
 				brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
-				brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO'
+				brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
+				shareUrl: shareTargetUrl
 			});
 
 			const { dataUrl, blob } = exportPhotostrip(canvas);

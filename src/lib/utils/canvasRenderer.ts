@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import type { FrameLayout, PhotoItem, StickerItem } from '$lib/types';
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -10,6 +11,23 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 	});
 }
 
+async function generateQrDataUrl(text: string): Promise<string> {
+	try {
+		return await QRCode.toDataURL(text, {
+			width: 320,
+			margin: 1,
+			color: {
+				dark: '#000000',
+				light: '#ffffff'
+			},
+			errorCorrectionLevel: 'M'
+		});
+	} catch (err) {
+		console.warn('[QR] Failed to generate QR code for canvas:', err);
+		return '';
+	}
+}
+
 export interface RenderOptions {
 	layout: FrameLayout;
 	photos: PhotoItem[];
@@ -20,6 +38,7 @@ export interface RenderOptions {
 	brandingTitle?: string;
 	brandingSubtitle?: string;
 	showTimestamp?: boolean;
+	shareUrl?: string;
 }
 
 /**
@@ -101,6 +120,25 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 	}
 
 	const isThematicReceipt = layout.id.startsWith('thematic-receipt');
+
+	let qrImg: HTMLImageElement | null = null;
+	if (isThematicReceipt) {
+		const targetShareUrl = options.shareUrl || (
+			sessionId
+				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `/share/${sessionId}`)
+				: ''
+		);
+		if (targetShareUrl) {
+			try {
+				const qrDataUrl = await generateQrDataUrl(targetShareUrl);
+				if (qrDataUrl) {
+					qrImg = await loadImage(qrDataUrl);
+				}
+			} catch (e) {
+				console.warn('Receipt QR generation error:', e);
+			}
+		}
+	}
 
 	// 1. Draw Background
 	ctx.fillStyle = layout.backgroundColor || '#FFFFFF';
@@ -335,25 +373,60 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		ctx.textAlign = 'right';
 		ctx.fillText(`100% SUCCESS`, layout.canvasWidth - 74, footerTop + 195);
 
-		// Barcode
-		drawBarcode(ctx, centerX, footerTop + 245, 620, 85, sessionId);
+		// Dashed Divider below Total
+		ctx.setLineDash([8, 6]);
+		ctx.strokeStyle = '#555555';
+		ctx.lineWidth = 2.5;
+		ctx.beginPath();
+		ctx.moveTo(54, footerTop + 235);
+		ctx.lineTo(layout.canvasWidth - 54, footerTop + 235);
+		ctx.stroke();
+		ctx.setLineDash([]);
 
-		ctx.textAlign = 'center';
-		ctx.font = '700 20px "Plus Jakarta Sans", monospace';
-		ctx.fillStyle = '#333333';
-		const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
-		ctx.fillText(codeStr, centerX, footerTop + 355);
+		if (qrImg) {
+			// Subtitle above QR
+			ctx.textAlign = 'center';
+			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
+			ctx.letterSpacing = '1px';
+			ctx.fillStyle = '#222222';
+			ctx.fillText('SCAN TO DOWNLOAD PHOTO & VIDEO', centerX, footerTop + 265);
+
+			// Draw QR Code centered with sharp high contrast
+			const qrSize = 260;
+			const qrX = centerX - qrSize / 2;
+			const qrY = footerTop + 295;
+			ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+
+			// Order / Session ID snippet below QR
+			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
+			ctx.letterSpacing = '0px';
+			ctx.fillStyle = '#333333';
+			const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
+			ctx.fillText(codeStr, centerX, footerTop + 575);
+		} else {
+			// Fallback to barcode if QR image is not available
+			drawBarcode(ctx, centerX, footerTop + 265, 620, 85, sessionId);
+
+			ctx.textAlign = 'center';
+			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
+			ctx.letterSpacing = '0px';
+			ctx.fillStyle = '#333333';
+			const codeStr = sessionId ? `* ${sessionId.toUpperCase().slice(-14)} *` : '* CHEKIYUUME-RECEIPT *';
+			ctx.fillText(codeStr, centerX, footerTop + 375);
+		}
 
 		// Thank You Note
-		ctx.font = '800 26px "Outfit", sans-serif';
-		ctx.letterSpacing = '3px';
+		ctx.textAlign = 'center';
+		ctx.font = '800 24px "Outfit", sans-serif';
+		ctx.letterSpacing = '2px';
 		ctx.fillStyle = '#111111';
-		ctx.fillText(`*** THANK YOU FOR VISITING ***`, centerX, footerTop + 410);
+		ctx.fillText(`*** THANK YOU FOR VISITING ***`, centerX, footerTop + 620);
 
-		ctx.font = '600 20px "Plus Jakarta Sans", monospace';
+		// Social handle
+		ctx.font = '600 18px "Plus Jakarta Sans", monospace';
 		ctx.letterSpacing = '1px';
 		ctx.fillStyle = '#666666';
-		ctx.fillText(`SHARE YOUR MOMENTS • TAG US @CHEKIYUUME`, centerX, footerTop + 455);
+		ctx.fillText(`SHARE YOUR MOMENTS • TAG US @CHEKIYUUME`, centerX, footerTop + 660);
 
 		ctx.restore();
 	} else if (!layout.id.startsWith('default-') && !layout.overlayUrl) {
