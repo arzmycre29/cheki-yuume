@@ -2210,6 +2210,25 @@
 							</p>
 						</div>
 
+						<div>
+							<label for="default-paper-select" class="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
+								Ukuran Kertas Bawaan (Default Printer)
+							</label>
+							<select
+								id="default-paper-select"
+								bind:value={formSettings.defaultPaperSize}
+								class="w-full rounded-2xl bg-zinc-800 border border-zinc-700 py-3 px-4 text-xs text-white focus:border-rose-500 focus:outline-hidden"
+							>
+								<option value="4R">📸 Foto 4R (10 × 15 cm)</option>
+								<option value="A4">📄 Kertas A4 Standar</option>
+								<option value="58mm">🧾 Roll Thermal 58mm (Printer Kasir / Bluetooth Mini)</option>
+								<option value="80mm">🧾 Roll Thermal 80mm (Printer Kasir Desktop)</option>
+							</select>
+							<p class="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">
+								Ukuran kertas yang otomatis terpilih saat modal cetak dibuka di layar hasil foto.
+							</p>
+						</div>
+
 						<div class="rounded-2xl bg-zinc-950/60 border border-zinc-800/80 p-4 flex items-center justify-between gap-4 mt-1">
 							<div>
 								<span class="text-xs font-bold text-white block">Efek Suara Interaktif</span>

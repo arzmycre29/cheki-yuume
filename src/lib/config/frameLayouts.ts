@@ -112,8 +112,54 @@ export const ALL_FRAME_TEMPLATES: FrameLayout[] = [
 		footerHeight: 270,
 		aspectRatioLabel: '5:16 (Classic 4-Cut)',
 		recommendedPaper: '4R'
+	},
+
+	// --- THEMATIC 1: RECEIPT PHOTOSTRIP (STRUK KASIR AESTHETIC) ---
+	{
+		id: 'thematic-receipt-classic',
+		name: 'Receipt Photostrip (Struk Kasir)',
+		description: 'Photostrip bernuansa struk belanja aesthetic dengan detail tanggal, pesanan, dan barcode',
+		mode: 'thematic',
+		totalSlots: 3,
+		canvasWidth: CANVAS_WIDTH,
+		canvasHeight: 3300,
+		slotWidth: SLOT_WIDTH,
+		slotHeight: SLOT_HEIGHT,
+		margin: MARGIN,
+		slots: [
+			{
+				index: 0,
+				x: MARGIN,
+				y: 440,
+				width: SLOT_WIDTH,
+				height: SLOT_HEIGHT,
+				borderRadius: 4
+			},
+			{
+				index: 1,
+				x: MARGIN,
+				y: 440 + SLOT_HEIGHT + MARGIN,
+				width: SLOT_WIDTH,
+				height: SLOT_HEIGHT,
+				borderRadius: 4
+			},
+			{
+				index: 2,
+				x: MARGIN,
+				y: 440 + (SLOT_HEIGHT + MARGIN) * 2,
+				width: SLOT_WIDTH,
+				height: SLOT_HEIGHT,
+				borderRadius: 4
+			}
+		],
+		backgroundColor: '#FFFFFF',
+		footerHeight: 565,
+		aspectRatioLabel: '1:3.05 (Thermal Receipt)',
+		recommendedPaper: '58mm'
 	}
 ];
+
+export const THEMATIC_FRAME_TEMPLATES = ALL_FRAME_TEMPLATES.filter((f) => f.mode === 'thematic');
 
 export const DEFAULT_SLOT_OPTIONS = [
 	{
@@ -153,7 +199,7 @@ export const DEFAULT_SLOT_OPTIONS = [
 export const CREATIVE_FRAMES = ALL_FRAME_TEMPLATES;
 
 export function getFramesBySlotCount(allFrames: FrameLayout[], slotCount: number): FrameLayout[] {
-	return allFrames.filter((f) => f.totalSlots === slotCount);
+	return allFrames.filter((f) => f.totalSlots === slotCount && f.mode !== 'thematic');
 }
 
 export function getLayoutById(id: string, customList?: FrameLayout[]): FrameLayout {

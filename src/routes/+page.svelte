@@ -25,10 +25,11 @@
 		Check,
 		Palette,
 		Eye,
-		EyeOff
+		EyeOff,
+		Receipt
 	} from '@lucide/svelte';
 
-	let step = $state<'attract' | 'mode-select' | 'slot-select' | 'theme-select'>('attract');
+	let step = $state<'attract' | 'mode-select' | 'thematic-select' | 'slot-select' | 'theme-select'>('attract');
 	let selectedMode = $state<CaptureMode>('default');
 	let selectedSlotCount = $state<number>(4);
 	let selectedLayout = $state<FrameLayout>(ALL_FRAME_TEMPLATES[3] || ALL_FRAME_TEMPLATES[0]);
@@ -64,11 +65,21 @@
 		selectedMode = mode;
 		if (mode === 'default') {
 			step = 'slot-select';
+		} else if (mode === 'thematic') {
+			step = 'thematic-select';
 		} else {
 			// Creative mode: starts 8-shot capture then chooses custom frame
 			selectedLayout = ALL_FRAME_TEMPLATES[3] || ALL_FRAME_TEMPLATES[0];
 			isNameModalOpen = true;
 		}
+	}
+
+	function handleSelectThematic(layoutId: string) {
+		selectedMode = 'thematic';
+		const layout = ALL_FRAME_TEMPLATES.find((f) => f.id === layoutId) || ALL_FRAME_TEMPLATES[0];
+		selectedLayout = layout;
+		selectedSlotCount = layout.totalSlots;
+		isNameModalOpen = true;
 	}
 
 	function handleSelectSlotCount(count: number) {
@@ -191,8 +202,8 @@
 		</div>
 
 	{:else if step === 'mode-select'}
-		<!-- Screen 2: Mode Selection (Fluid: Phone Landscape, Tablet & PC) -->
-		<div class="my-auto flex flex-col items-center justify-center w-full max-w-4xl animate-in fade-in duration-200 gap-2 sm:gap-4 lg:gap-6">
+		<!-- Screen 2: Mode Selection (Fluid: Mobile Portrait/Landscape, Tablet & PC) -->
+		<div class="my-auto flex flex-col items-center justify-center w-full max-w-5xl animate-in fade-in duration-200 gap-2 sm:gap-4 lg:gap-6">
 			<!-- Header -->
 			<div class="flex items-center justify-between w-full shrink-0">
 				<button
@@ -205,33 +216,33 @@
 				</button>
 				<div class="text-center">
 					<h2 class="text-sm sm:text-xl lg:text-2xl font-black text-white font-display">Pilih Mode Photobooth</h2>
-					<p class="text-[9px] sm:text-xs text-zinc-400">Pilih alur preset cepat atau eksplorasi kreatif 8 pose</p>
+					<p class="text-[9px] sm:text-xs text-zinc-400">Pilih alur preset cepat, eksplorasi kreatif, atau konsep tematik khusus</p>
 				</div>
 				<div class="w-12 sm:w-16"></div>
 			</div>
 
-			<!-- 2 Mode Cards: Side-by-Side -->
-			<div class="grid grid-cols-2 gap-2.5 sm:gap-6 lg:gap-8 w-full max-w-3xl justify-center items-stretch">
+			<!-- 3 Mode Cards: Responsive 1 col (mobile) -> 3 cols (tablet/PC) -->
+			<div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-4 lg:gap-6 w-full justify-center items-stretch">
 				<!-- Mode Default Card -->
 				<button
 					type="button"
 					onclick={() => chooseMode('default')}
-					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-2.5 sm:p-5 lg:p-7 text-center transition-all hover:border-rose-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl lg:shadow-2xl cursor-pointer min-h-[170px] sm:min-h-[250px] lg:min-h-[290px] max-h-[min(70vh,380px)]"
+					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-3 sm:p-5 lg:p-6 text-center transition-all hover:border-rose-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl cursor-pointer min-h-[160px] sm:min-h-[250px] lg:min-h-[290px]"
 				>
 					<div class="flex flex-col items-center">
-						<div class="flex h-8 w-8 sm:h-12 sm:w-12 lg:h-16 lg:w-16 items-center justify-center rounded-xl sm:rounded-2xl lg:rounded-3xl bg-rose-500/10 text-rose-400 border border-rose-500/20 mb-1 sm:mb-3 group-hover:scale-110 transition-transform shadow-md">
-							<Zap class="h-4 w-4 sm:h-6 sm:w-6 lg:h-8 lg:w-8" />
+						<div class="flex h-8 w-8 sm:h-12 sm:w-12 lg:h-14 lg:w-14 items-center justify-center rounded-xl sm:rounded-2xl bg-rose-500/10 text-rose-400 border border-rose-500/20 mb-1 sm:mb-2.5 group-hover:scale-110 transition-transform shadow-md">
+							<Zap class="h-4 w-4 sm:h-6 sm:w-6 lg:h-7 lg:w-7" />
 						</div>
-						<span class="rounded-full bg-rose-500/20 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[11px] font-extrabold uppercase tracking-wider text-rose-300 border border-rose-500/30 mb-0.5 sm:mb-2">
+						<span class="rounded-full bg-rose-500/20 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[10px] font-extrabold uppercase tracking-wider text-rose-300 border border-rose-500/30 mb-0.5 sm:mb-1.5">
 							Rekomendasi Cepat
 						</span>
-						<h3 class="text-[11px] sm:text-base lg:text-2xl font-black text-white font-display">Mode Default (Preset)</h3>
-						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs lg:text-sm text-zinc-400 leading-relaxed max-w-xs line-clamp-2 sm:line-clamp-3">
+						<h3 class="text-[11px] sm:text-base lg:text-xl font-black text-white font-display">Mode Default (Preset)</h3>
+						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs text-zinc-400 leading-relaxed max-w-xs line-clamp-2 sm:line-clamp-3">
 							Pilih 1–4 slot foto, lalu foto otomatis langsung terisi ke dalam frame saat berpose.
 						</p>
 					</div>
 
-					<div class="mt-1.5 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-rose-500 py-1 sm:py-2.5 lg:py-3 px-2 sm:px-4 text-[9px] sm:text-xs lg:text-sm font-bold text-white transition-colors shadow-lg">
+					<div class="mt-1.5 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-rose-500 py-1.5 sm:py-2.5 px-2 sm:px-4 text-[9px] sm:text-xs font-bold text-white transition-colors shadow-lg">
 						<span>Pilih Default</span>
 						<ArrowRight class="h-3 w-3 sm:h-4 sm:w-4" />
 					</div>
@@ -241,26 +252,144 @@
 				<button
 					type="button"
 					onclick={() => chooseMode('creative')}
-					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-2.5 sm:p-5 lg:p-7 text-center transition-all hover:border-indigo-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl lg:shadow-2xl cursor-pointer min-h-[170px] sm:min-h-[250px] lg:min-h-[290px] max-h-[min(70vh,380px)]"
+					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-3 sm:p-5 lg:p-6 text-center transition-all hover:border-indigo-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl cursor-pointer min-h-[160px] sm:min-h-[250px] lg:min-h-[290px]"
 				>
 					<div class="flex flex-col items-center">
-						<div class="flex h-8 w-8 sm:h-12 sm:w-12 lg:h-16 lg:w-16 items-center justify-center rounded-xl sm:rounded-2xl lg:rounded-3xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-1 sm:mb-3 group-hover:scale-110 transition-transform shadow-md">
-							<Sparkles class="h-4 w-4 sm:h-6 sm:w-6 lg:h-8 lg:w-8" />
+						<div class="flex h-8 w-8 sm:h-12 sm:w-12 lg:h-14 lg:w-14 items-center justify-center rounded-xl sm:rounded-2xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-1 sm:mb-2.5 group-hover:scale-110 transition-transform shadow-md">
+							<Sparkles class="h-4 w-4 sm:h-6 sm:w-6 lg:h-7 lg:w-7" />
 						</div>
-						<span class="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[11px] font-extrabold uppercase tracking-wider text-indigo-300 border border-indigo-500/30 mb-0.5 sm:mb-2">
+						<span class="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[10px] font-extrabold uppercase tracking-wider text-indigo-300 border border-indigo-500/30 mb-0.5 sm:mb-1.5">
 							Bebas Berkreasi
 						</span>
-						<h3 class="text-[11px] sm:text-base lg:text-2xl font-black text-white font-display">Mode Creative (8 Pose)</h3>
-						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs lg:text-sm text-zinc-400 leading-relaxed max-w-xs line-clamp-2 sm:line-clamp-3">
+						<h3 class="text-[11px] sm:text-base lg:text-xl font-black text-white font-display">Mode Creative (8 Pose)</h3>
+						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs text-zinc-400 leading-relaxed max-w-xs line-clamp-2 sm:line-clamp-3">
 							Ambil 8 foto sepuasnya, lalu pilih frame aesthetic dan atur tata letak fotomu bebas.
 						</p>
 					</div>
 
-					<div class="mt-1.5 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-indigo-500 py-1 sm:py-2.5 lg:py-3 px-2 sm:px-4 text-[9px] sm:text-xs lg:text-sm font-bold text-white transition-colors shadow-lg">
+					<div class="mt-1.5 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-indigo-500 py-1.5 sm:py-2.5 px-2 sm:px-4 text-[9px] sm:text-xs font-bold text-white transition-colors shadow-lg">
 						<span>Pilih Creative</span>
 						<ArrowRight class="h-3 w-3 sm:h-4 sm:w-4" />
 					</div>
 				</button>
+
+				<!-- Mode Thematic Card (New) -->
+				<button
+					type="button"
+					onclick={() => chooseMode('thematic')}
+					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-3 sm:p-5 lg:p-6 text-center transition-all hover:border-emerald-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl cursor-pointer min-h-[160px] sm:min-h-[250px] lg:min-h-[290px]"
+				>
+					<div class="flex flex-col items-center">
+						<div class="flex h-8 w-8 sm:h-12 sm:w-12 lg:h-14 lg:w-14 items-center justify-center rounded-xl sm:rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-1 sm:mb-2.5 group-hover:scale-110 transition-transform shadow-md">
+							<Receipt class="h-4 w-4 sm:h-6 sm:w-6 lg:h-7 lg:w-7" />
+						</div>
+						<span class="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 border border-emerald-500/30 mb-0.5 sm:mb-1.5">
+							Edisi Spesial
+						</span>
+						<h3 class="text-[11px] sm:text-base lg:text-xl font-black text-white font-display">Mode Thematic (Special)</h3>
+						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs text-zinc-400 leading-relaxed max-w-xs line-clamp-2 sm:line-clamp-3">
+							Konsep photobooth tematik: Struk Kasir Aesthetic, Y2K, & tema viral lainnya.
+						</p>
+					</div>
+
+					<div class="mt-1.5 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-emerald-500 py-1.5 sm:py-2.5 px-2 sm:px-4 text-[9px] sm:text-xs font-bold text-white transition-colors shadow-lg">
+						<span>Pilih Thematic</span>
+						<ArrowRight class="h-3 w-3 sm:h-4 sm:w-4" />
+					</div>
+				</button>
+			</div>
+		</div>
+
+	{:else if step === 'thematic-select'}
+		<!-- Screen 2.5: Thematic Selection (Receipt Photostrip + Future Concepts) -->
+		<div class="my-auto flex flex-col items-center justify-center w-full max-w-5xl animate-in fade-in duration-200 gap-2.5 sm:gap-5">
+			<!-- Header -->
+			<div class="flex items-center justify-between w-full shrink-0">
+				<button
+					type="button"
+					onclick={() => (step = 'mode-select')}
+					class="flex items-center gap-1.5 rounded-xl bg-zinc-900 border border-zinc-800 px-2.5 py-1 sm:px-3.5 sm:py-2 text-[10px] sm:text-xs font-bold text-zinc-400 hover:text-white active:scale-95 cursor-pointer shadow-md"
+				>
+					<ArrowLeft class="h-3.5 w-3.5" />
+					<span>Kembali</span>
+				</button>
+				<div class="text-center">
+					<h2 class="text-sm sm:text-xl lg:text-2xl font-black text-white font-display">Pilih Konsep Thematic</h2>
+					<p class="text-[9px] sm:text-xs text-zinc-400">Pilih konsep visual unik untuk sesi photobooth kamu</p>
+				</div>
+				<div class="w-12 sm:w-16"></div>
+			</div>
+
+			<!-- Thematic Cards Grid -->
+			<div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-4 lg:gap-6 w-full justify-center items-stretch">
+				<!-- Theme 1: Receipt Photostrip (Available Now) -->
+				<button
+					type="button"
+					onclick={() => handleSelectThematic('thematic-receipt-classic')}
+					class="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-900/90 hover:bg-zinc-800/90 p-3 sm:p-5 lg:p-6 text-center transition-all hover:border-emerald-500/60 hover:scale-[1.02] active:scale-[0.98] shadow-xl cursor-pointer min-h-[170px] sm:min-h-[250px] lg:min-h-[290px]"
+				>
+					<div class="flex flex-col items-center">
+						<div class="flex h-9 w-9 sm:h-12 sm:w-12 lg:h-14 lg:w-14 items-center justify-center rounded-xl sm:rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-1.5 sm:mb-2.5 group-hover:scale-110 transition-transform shadow-md">
+							<Receipt class="h-4 w-4 sm:h-6 sm:w-6 lg:h-7 lg:w-7" />
+						</div>
+						<span class="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 border border-emerald-500/30 mb-0.5 sm:mb-1.5">
+							✨ Tersedia Sekarang
+						</span>
+						<h3 class="text-[11px] sm:text-base lg:text-xl font-black text-white font-display">Receipt Photostrip</h3>
+						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs text-zinc-400 leading-relaxed max-w-xs line-clamp-3">
+							Format struk kasir belanja aesthetic lengkap dengan header toko, tanggal, 3 pose foto, dan barcode estetik. Cocok dicetak di printer thermal roll!
+						</p>
+					</div>
+
+					<div class="mt-2 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800 group-hover:bg-emerald-500 py-1.5 sm:py-2.5 px-2 sm:px-4 text-[9px] sm:text-xs font-bold text-white transition-colors shadow-lg">
+						<span>Mulai Sesi Struk</span>
+						<ArrowRight class="h-3 w-3 sm:h-4 sm:w-4" />
+					</div>
+				</button>
+
+				<!-- Theme 2: Y2K Retro Magazine (Coming Soon) -->
+				<div
+					class="flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800/60 bg-zinc-900/50 p-3 sm:p-5 lg:p-6 text-center opacity-60 min-h-[170px] sm:min-h-[250px] lg:min-h-[290px] select-none"
+				>
+					<div class="flex flex-col items-center">
+						<div class="flex h-9 w-9 sm:h-12 sm:w-12 lg:h-14 lg:w-14 items-center justify-center rounded-xl sm:rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/20 mb-1.5 sm:mb-2.5 shadow-md">
+							<Palette class="h-4 w-4 sm:h-6 sm:w-6 lg:h-7 lg:w-7" />
+						</div>
+						<span class="rounded-full bg-zinc-800 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 border border-zinc-700 mb-0.5 sm:mb-1.5">
+							⏳ Segera Hadir
+						</span>
+						<h3 class="text-[11px] sm:text-base lg:text-xl font-bold text-zinc-300 font-display">Y2K Magazine</h3>
+						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs text-zinc-500 leading-relaxed max-w-xs line-clamp-3">
+							Nuansa majalah pop 2000-an dengan tipografi bold, stiker retro funky, dan border cover majalah.
+						</p>
+					</div>
+
+					<div class="mt-2 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800/50 py-1.5 sm:py-2.5 px-2 sm:px-4 text-[9px] sm:text-xs font-semibold text-zinc-500">
+						<span>Coming Soon</span>
+					</div>
+				</div>
+
+				<!-- Theme 3: Cyber Arcade Neon (Coming Soon) -->
+				<div
+					class="flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-zinc-800/60 bg-zinc-900/50 p-3 sm:p-5 lg:p-6 text-center opacity-60 min-h-[170px] sm:min-h-[250px] lg:min-h-[290px] select-none"
+				>
+					<div class="flex flex-col items-center">
+						<div class="flex h-9 w-9 sm:h-12 sm:w-12 lg:h-14 lg:w-14 items-center justify-center rounded-xl sm:rounded-2xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 mb-1.5 sm:mb-2.5 shadow-md">
+							<Zap class="h-4 w-4 sm:h-6 sm:w-6 lg:h-7 lg:w-7" />
+						</div>
+						<span class="rounded-full bg-zinc-800 px-2 py-0.5 text-[7px] sm:text-[9px] lg:text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 border border-zinc-700 mb-0.5 sm:mb-1.5">
+							⏳ Segera Hadir
+						</span>
+						<h3 class="text-[11px] sm:text-base lg:text-xl font-bold text-zinc-300 font-display">Cyber Arcade</h3>
+						<p class="mt-0.5 sm:mt-1 text-[8px] sm:text-xs text-zinc-500 leading-relaxed max-w-xs line-clamp-3">
+							Format retro game arcade dengan scanline effect, neon cyberpunk glow, dan 8-bit visual badge.
+						</p>
+					</div>
+
+					<div class="mt-2 sm:mt-4 flex items-center justify-center gap-1 sm:gap-2 rounded-xl sm:rounded-2xl bg-zinc-800/50 py-1.5 sm:py-2.5 px-2 sm:px-4 text-[9px] sm:text-xs font-semibold text-zinc-500">
+						<span>Coming Soon</span>
+					</div>
+				</div>
 			</div>
 		</div>
 
@@ -479,7 +608,6 @@
 							placeholder={showAdminPinReveal ? '1234' : '••••'}
 							class="w-full text-center {showAdminPinReveal ? 'tracking-[0.4em]' : 'tracking-[1em]'} text-3xl font-black rounded-2xl bg-zinc-800 border border-zinc-700 py-3 pl-12 pr-12 text-white focus:border-rose-500 focus:outline-hidden font-mono"
 							onkeydown={(e) => e.key === 'Enter' && handleAdminPinSubmit()}
-							autofocus
 						/>
 						<button
 							type="button"

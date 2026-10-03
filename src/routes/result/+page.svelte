@@ -185,17 +185,16 @@
 			<div>
 				<h1 class="text-xs sm:text-base font-black text-white font-display leading-tight">Sesi Foto Selesai!</h1>
 				<!-- Tap 5x on session ID to open debug panel -->
-				<p
-					class="text-[9px] sm:text-xs text-zinc-400 leading-tight cursor-pointer select-none"
+				<button
+					type="button"
+					class="text-left text-[9px] sm:text-xs text-zinc-400 leading-tight cursor-pointer select-none bg-transparent border-none p-0"
 					onclick={handleDebugTap}
-					role="button"
-					tabindex="-1"
 				>
 					Tamu: <strong class="text-rose-400">{session.guestName || 'Tamu'}</strong> [{session.sessionId.slice(-6)}]
 					{#if debugTapCount > 0 && debugTapCount < 5}
 						<span class="text-zinc-600 text-[8px]">({debugTapCount}/5)</span>
 					{/if}
-				</p>
+				</button>
 			</div>
 		</div>
 

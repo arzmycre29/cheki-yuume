@@ -1,4 +1,4 @@
-export type CaptureMode = 'default' | 'creative';
+export type CaptureMode = 'default' | 'creative' | 'thematic';
 
 export interface PhotoItem {
 	id: string;
@@ -37,7 +37,7 @@ export interface FrameLayout {
 	backgroundColor: string;
 	footerHeight: number;
 	aspectRatioLabel: string;
-	recommendedPaper: '4R' | 'A4';
+	recommendedPaper: '4R' | 'A4' | '58mm' | '80mm';
 }
 
 export interface StickerItem {
@@ -93,7 +93,7 @@ export interface KioskSettings {
 	cloudBucket: string;
 	cloudAccessKey: string;
 	cloudSecretKey: string;
-	defaultPaperSize: '4R' | 'A4';
+	defaultPaperSize: '4R' | 'A4' | '58mm' | '80mm';
 	defaultCopies: 1 | 2 | 4;
 	enableSound: boolean;
 }
@@ -101,7 +101,7 @@ export interface KioskSettings {
 export type LayoutCategory = 'strip' | 'duo' | 'card';
 
 export interface PrintOptions {
-	paperSize: '4R' | 'A4';
+	paperSize: '4R' | 'A4' | '58mm' | '80mm';
 	orientation: 'portrait' | 'landscape';
 	copies: 1 | 2 | 4;
 	sizeMode: 'actual' | 'fit';

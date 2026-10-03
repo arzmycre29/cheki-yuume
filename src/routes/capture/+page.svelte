@@ -72,7 +72,7 @@
 		<span>Kembali</span>
 	</button>
 
-	{#if session.mode === 'default'}
+	{#if session.mode === 'default' || session.mode === 'thematic'}
 		<DefaultCaptureFlow
 			layout={currentLayout}
 			onFinishCapture={handleFinishDefault}

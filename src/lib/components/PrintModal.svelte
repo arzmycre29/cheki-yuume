@@ -17,7 +17,8 @@
 		LayoutGrid,
 		Leaf,
 		Grid2x2,
-		CreditCard
+		CreditCard,
+		Receipt
 	} from '@lucide/svelte';
 
 	interface Props {
@@ -63,7 +64,7 @@
 				const ratio = img.naturalWidth / img.naturalHeight;
 				aspectRatio = ratio;
 
-				const defaultPaper = $settingsStore.defaultPaperSize || '4R';
+				const defaultPaper = $sessionStore.mode === 'thematic' ? '58mm' : ($settingsStore.defaultPaperSize || '4R');
 				printOptions.paperSize = defaultPaper;
 
 				if (ratio < 0.45) {
@@ -99,13 +100,16 @@
 	});
 
 	// Reactive clamping when copies or mode changes
-	function setPaperSize(size: '4R' | 'A4') {
+	function setPaperSize(size: '4R' | 'A4' | '58mm' | '80mm') {
 		printOptions.paperSize = size;
 		if (size === '4R' && printOptions.copies === 4) {
 			printOptions.copies = 2;
 		}
-		if (size === '4R' && printOptions.orientation === 'landscape') {
+		if (size !== 'A4' && printOptions.orientation === 'landscape') {
 			printOptions.orientation = 'portrait';
+		}
+		if (size === '58mm' || size === '80mm') {
+			printOptions.sizeMode = 'actual';
 		}
 	}
 
@@ -167,6 +171,8 @@
 	}
 
 	// Derived helpers
+	let isThermalRoll = $derived(printOptions.paperSize === '58mm' || printOptions.paperSize === '80mm');
+
 	let isHorizontalEcoLayout = $derived(
 		printOptions.paperSize === 'A4' &&
 		printOptions.sizeMode === 'actual' &&
@@ -194,7 +200,7 @@
 		aria-modal="true"
 	>
 		<div
-			class="w-full max-w-4xl rounded-3xl bg-zinc-900/95 border border-zinc-800 p-5 sm:p-7 shadow-2xl overflow-hidden flex flex-col max-h-[92vh] text-zinc-100 backdrop-blur-xl"
+			class="w-full max-w-4xl rounded-3xl bg-zinc-900/95 border border-zinc-800 p-4 sm:p-7 shadow-2xl overflow-hidden flex flex-col max-h-[94vh] sm:max-h-[92vh] text-zinc-100 backdrop-blur-xl"
 		>
 			<!-- Header -->
 			<div class="flex items-center justify-between pb-4 border-b border-zinc-800 shrink-0">
@@ -207,7 +213,13 @@
 					<div>
 						<h2 class="text-xl sm:text-2xl font-black text-white font-display tracking-tight flex items-center gap-2">
 							<span>Pengaturan Cetak Foto</span>
-							{#if isHorizontalEcoLayout || isA4GridMode}
+							{#if isThermalRoll}
+								<span
+									class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+								>
+									<Receipt class="h-3 w-3" /> Thermal Roll {printOptions.paperSize}
+								</span>
+							{:else if isHorizontalEcoLayout || isA4GridMode}
 								<span
 									class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
 								>
@@ -260,10 +272,35 @@
 							class="relative bg-white shadow-2xl rounded-xs transition-all duration-300 border border-zinc-300 overflow-hidden flex"
 							style="
 								height: 270px;
-								aspect-ratio: {printOptions.paperSize === 'A4' ? '210/297' : '101.6/152.4'};
+								aspect-ratio: {isThermalRoll ? (printOptions.paperSize === '58mm' ? '58/150' : '80/150') : printOptions.paperSize === 'A4' ? '210/297' : '101.6/152.4'};
 							"
 						>
-							{#if isHorizontalEcoLayout}
+							{#if isThermalRoll}
+								<!-- 0. Thermal Receipt Roll Preview (58mm / 80mm) -->
+								<div class="w-full h-full flex flex-col items-center justify-start py-2 px-1 overflow-y-auto bg-zinc-100 select-none">
+									<div
+										class="flex flex-col items-center bg-white shadow-md border-x border-zinc-300 transition-all my-auto"
+										style="width: {printOptions.paperSize === '58mm' ? '82%' : '92%'}; min-height: 95%;"
+									>
+										{#each Array(printOptions.copies || 1) as _, i}
+											{#if i > 0}
+												<div class="w-full border-t border-dashed border-zinc-400 my-2 relative text-center">
+													<span class="text-[7px] font-mono font-bold text-zinc-500 bg-white px-1 relative -top-2">
+														✂ POTONG ✂
+													</span>
+												</div>
+											{/if}
+											<div class="w-full p-1 flex justify-center">
+												<img
+													src={photostripDataUrl}
+													alt="Thermal Strip {i + 1}"
+													class="w-full object-contain shadow-xs border border-zinc-200"
+												/>
+											</div>
+										{/each}
+									</div>
+								</div>
+							{:else if isHorizontalEcoLayout}
 								<!-- 1. A4 Landscape 4-Slot Eco Mode (Strip) -->
 								{@const tops = ['6.73%', '27.95%', '49.16%', '70.37%']}
 								{@const slotLabels = ['Slot 1 (Atas)', 'Slot 2', 'Slot 3', 'Slot 4 (Bawah)']}
@@ -413,27 +450,65 @@
 						<div class="block text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
 							1. Ukuran Kertas Printer
 						</div>
-						<div class="grid grid-cols-2 gap-2">
+						<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
 							<button
 								type="button"
 								onclick={() => setPaperSize('4R')}
-								class="flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-xs font-bold border transition-all cursor-pointer {printOptions.paperSize === '4R'
+								class="flex flex-col items-center justify-center p-2.5 rounded-xl border text-center transition-all cursor-pointer {printOptions.paperSize === '4R'
 									? 'bg-rose-500/20 border-rose-500 text-rose-300 shadow-sm shadow-rose-500/10'
 									: 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80 hover:text-white'}"
 							>
-								<span>📸 Kertas 4R (4"×6")</span>
+								<span class="text-xs font-bold">📸 Foto 4R</span>
+								<span class="text-[9px] text-zinc-400 mt-0.5">10 × 15 cm</span>
 							</button>
 							<button
 								type="button"
 								onclick={() => setPaperSize('A4')}
-								class="flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-xs font-bold border transition-all cursor-pointer {printOptions.paperSize === 'A4'
+								class="flex flex-col items-center justify-center p-2.5 rounded-xl border text-center transition-all cursor-pointer {printOptions.paperSize === 'A4'
 									? 'bg-rose-500/20 border-rose-500 text-rose-300 shadow-sm shadow-rose-500/10'
 									: 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80 hover:text-white'}"
 							>
-								<span>📄 Kertas A4 Standar</span>
+								<span class="text-xs font-bold">📄 Kertas A4</span>
+								<span class="text-[9px] text-zinc-400 mt-0.5">Multi-slot/grid</span>
+							</button>
+							<button
+								type="button"
+								onclick={() => setPaperSize('58mm')}
+								class="flex flex-col items-center justify-center p-2.5 rounded-xl border text-center transition-all cursor-pointer {printOptions.paperSize === '58mm'
+									? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-sm shadow-emerald-500/10'
+									: 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80 hover:text-white'}"
+							>
+								<span class="text-xs font-bold">🧾 Roll 58mm</span>
+								<span class="text-[9px] text-zinc-400 mt-0.5">Thermal Mini/BT</span>
+							</button>
+							<button
+								type="button"
+								onclick={() => setPaperSize('80mm')}
+								class="flex flex-col items-center justify-center p-2.5 rounded-xl border text-center transition-all cursor-pointer {printOptions.paperSize === '80mm'
+									? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-sm shadow-emerald-500/10'
+									: 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80 hover:text-white'}"
+							>
+								<span class="text-xs font-bold">🧾 Roll 80mm</span>
+								<span class="text-[9px] text-zinc-400 mt-0.5">Thermal POS Kasir</span>
 							</button>
 						</div>
 					</div>
+
+					<!-- Thermal Roll Info Banner -->
+					{#if isThermalRoll}
+						<div class="rounded-2xl bg-emerald-500/10 border border-emerald-500/25 p-3 flex items-start gap-2.5 text-emerald-300 text-xs">
+							<Receipt class="h-4 w-4 shrink-0 mt-0.5 text-emerald-400" />
+							<div>
+								<p class="font-bold text-white flex items-center gap-1.5">
+									<span>Mode Printer Kasir / Thermal Bluetooth</span>
+									<span class="text-[9px] bg-emerald-500/20 px-1.5 py-0.5 rounded text-emerald-300 font-semibold">Continuous Roll</span>
+								</p>
+								<p class="text-[10px] text-emerald-200/80 mt-1 leading-relaxed">
+									Kertas diset otomatis ke lebar {printOptions.paperSize} continuous roll. Di HP/Tablet Android, pilih printer via <strong>RawBT</strong> pada dialog browser. Di PC, gunakan driver <strong>POS-{printOptions.paperSize === '58mm' ? '58' : '80'}</strong>.
+								</p>
+							</div>
+						</div>
+					{/if}
 
 					<!-- 2. Orientation (for vertical photostrips on A4) -->
 					{#if isPortraitStrip && printOptions.paperSize === 'A4'}
@@ -469,7 +544,7 @@
 					{/if}
 
 					<!-- 3. Size Mode -->
-					{#if printOptions.orientation === 'portrait'}
+					{#if printOptions.orientation === 'portrait' && !isThermalRoll}
 						<div>
 							<div class="block text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
 								3. Ukuran Cetak
@@ -515,10 +590,10 @@
 					{/if}
 
 					<!-- 4. Copies -->
-					{#if printOptions.sizeMode !== 'fit'}
+					{#if printOptions.sizeMode !== 'fit' || isThermalRoll}
 						<div>
 							<div class="block text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
-								4. Jumlah Salinan ({printOptions.copies}x {layoutCategory === 'card' ? 'Kartu' : 'Strip'})
+								{isThermalRoll ? `2. Jumlah Cetak Struk (${printOptions.copies}x Roll)` : `4. Jumlah Salinan (${printOptions.copies}x ${layoutCategory === 'card' ? 'Kartu' : 'Strip'})`}
 							</div>
 							<div class="grid grid-cols-3 gap-2">
 								<button
@@ -528,7 +603,7 @@
 										? 'bg-rose-500/20 border-rose-500 text-rose-300'
 										: 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80'}"
 								>
-									1x {layoutCategory === 'card' ? 'Kartu' : 'Strip'}
+									1x ({isThermalRoll ? 'Roll' : layoutCategory === 'card' ? 'Kartu' : 'Strip'})
 								</button>
 								<button
 									type="button"
@@ -537,7 +612,7 @@
 										? 'bg-rose-500/20 border-rose-500 text-rose-300'
 										: 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80'}"
 								>
-									2x (Standar)
+									2x ({isThermalRoll ? 'Roll' : 'Standar'})
 								</button>
 								<button
 									type="button"
@@ -547,7 +622,7 @@
 										? 'bg-rose-500/20 border-rose-500 text-rose-300'
 										: 'bg-zinc-800/80 border-zinc-700/80 text-zinc-300 hover:bg-zinc-700/80'} disabled:opacity-25 disabled:pointer-events-none"
 								>
-									4x (A4)
+									4x ({isThermalRoll ? 'Roll' : 'A4'})
 								</button>
 							</div>
 						</div>

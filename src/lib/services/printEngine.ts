@@ -47,10 +47,14 @@ export function executePrint(
 			return;
 		}
 
-		const pageSizeRule =
-			options.paperSize === '4R'
-				? 'size: 101.6mm 152.4mm; margin: 0;'
-				: 'size: A4; margin: 0;';
+		let pageSizeRule = 'size: A4; margin: 0;';
+		if (options.paperSize === '4R') {
+			pageSizeRule = 'size: 101.6mm 152.4mm; margin: 0;';
+		} else if (options.paperSize === '58mm') {
+			pageSizeRule = 'size: 58mm auto; margin: 0;';
+		} else if (options.paperSize === '80mm') {
+			pageSizeRule = 'size: 80mm auto; margin: 0;';
+		}
 
 		const category: LayoutCategory =
 			options.layoutCategory || (isPortraitStrip ? 'strip' : 'card');
@@ -61,8 +65,78 @@ export function executePrint(
 		let bodyStyles = '';
 		let contentHtml = '';
 
-		// ─── A4 PAPER LAYOUT COMPILERS ───
-		if (options.paperSize === 'A4' && options.sizeMode === 'actual') {
+		// ─── THERMAL RECEIPT ROLL COMPILERS (58mm / 80mm) ───
+		if (options.paperSize === '58mm' || options.paperSize === '80mm') {
+			const is58 = options.paperSize === '58mm';
+			const printWidth = is58 ? '48mm' : '72mm';
+			const containerWidth = is58 ? '54mm' : '76mm';
+
+			bodyStyles = `
+				html, body {
+					margin: 0; padding: 0; width: 100%; min-height: 100%;
+					background: #ffffff; box-sizing: border-box;
+				}
+				.thermal-container {
+					width: ${containerWidth};
+					margin: 0 auto;
+					padding: 2mm 0 4mm 0;
+					display: flex;
+					flex-direction: column;
+					align-items: center;
+					box-sizing: border-box;
+				}
+				.thermal-item {
+					width: ${printWidth};
+					display: flex;
+					flex-direction: column;
+					align-items: center;
+				}
+				.thermal-img {
+					width: 100%;
+					height: auto;
+					display: block;
+					object-fit: contain;
+					image-rendering: -webkit-optimize-contrast;
+					image-rendering: crisp-edges;
+				}
+				.thermal-cut-divider {
+					width: 92%;
+					margin: 4mm auto;
+					border-top: 0.5mm dashed #777777;
+					text-align: center;
+					position: relative;
+				}
+				.thermal-cut-label {
+					display: inline-block;
+					position: relative;
+					top: -2.8mm;
+					background: #ffffff;
+					padding: 0 1.5mm;
+					font-size: 2.2mm;
+					font-family: monospace, sans-serif;
+					font-weight: bold;
+					color: #555555;
+					letter-spacing: 0.5px;
+				}
+			`;
+
+			let thermalItemsHtml = '';
+			for (let i = 0; i < copies; i++) {
+				if (i > 0) {
+					thermalItemsHtml += `
+						<div class="thermal-cut-divider">
+							<span class="thermal-cut-label">✂ POTONG DI SINI ✂</span>
+						</div>
+					`;
+				}
+				thermalItemsHtml += `
+					<div class="thermal-item">
+						<img src="${imageDataUrl}" class="thermal-img" alt="Receipt Photostrip ${i + 1}" />
+					</div>
+				`;
+			}
+			contentHtml = `<div class="thermal-container">${thermalItemsHtml}</div>`;
+		} else if (options.paperSize === 'A4' && options.sizeMode === 'actual') {
 			if (category === 'strip' && options.orientation === 'landscape') {
 				// 1. A4 Landscape Eco Mode (4-Slot Horizontal with 90° rotation)
 				const tops = ['20mm', '83mm', '146mm', '209mm'];

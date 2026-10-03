@@ -187,7 +187,6 @@
 							placeholder={showPinReveal ? '1234' : '••••'}
 							class="w-full text-center {showPinReveal ? 'tracking-[0.4em]' : 'tracking-[1em]'} text-3xl font-black rounded-2xl bg-zinc-800 border border-zinc-700 py-3 pl-12 pr-12 text-white focus:border-rose-500 focus:outline-hidden font-mono"
 							onkeydown={(e) => e.key === 'Enter' && handlePinSubmit()}
-							autofocus
 						/>
 						<button
 							type="button"
