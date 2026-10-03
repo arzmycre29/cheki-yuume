@@ -15,18 +15,95 @@ import type { PrintOptions, LayoutCategory } from '$lib/types';
  * @param isPortraitStrip - Whether the image is a vertical photostrip
  * @returns Promise<boolean> Resolves to true when print is executed/closed
  */
-export function executePrint(
+/**
+ * Intercepts thermal printing via ChekiPrint Bridge on localhost:18080.
+ * Returns true if sent directly to Bluetooth printer without opening browser print dialog.
+ */
+async function tryPrintViaBridge(imageDataUrl: string, options: PrintOptions): Promise<boolean> {
+	try {
+		const statusRes = await fetch('http://127.0.0.1:18080/status', {
+			signal: AbortSignal.timeout(500)
+		});
+		if (!statusRes.ok) return false;
+		const status = await statusRes.json();
+		if (!status.online) return false;
+
+		const img = new Image();
+		img.src = imageDataUrl;
+		await new Promise<void>((resolve, reject) => {
+			img.onload = () => resolve();
+			img.onerror = reject;
+		});
+
+		const targetWidth = options.paperSize === '80mm' ? 576 : 384;
+		const scale = targetWidth / img.naturalWidth;
+		const targetHeight = Math.round(img.naturalHeight * scale);
+
+		const canvas = document.createElement('canvas');
+		canvas.width = targetWidth;
+		canvas.height = targetHeight;
+		const ctx = canvas.getContext('2d');
+		if (!ctx) return false;
+
+		ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+		const imgData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+		const uint8 = new Uint8Array(imgData.data.buffer);
+
+		let binary = '';
+		const len = uint8.length;
+		for (let i = 0; i < len; i += 8192) {
+			const chunk = uint8.subarray(i, Math.min(i + 8192, len));
+			binary += String.fromCharCode.apply(null, Array.from(chunk));
+		}
+		const rgbaBase64 = btoa(binary);
+
+		const copies = options.sizeMode === 'fit' ? 1 : (options.copies || 1);
+
+		for (let c = 0; c < copies; c++) {
+			const res = await fetch('http://127.0.0.1:18080/print', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					rgba: rgbaBase64,
+					width: targetWidth,
+					height: targetHeight,
+					options: {
+						feedLines: 4,
+						cut: options.paperSize === '80mm'
+					}
+				})
+			});
+			if (!res.ok) return false;
+		}
+
+		console.log('[PrintEngine] ✅ Printed silently via ChekiPrint Bridge!');
+		return true;
+	} catch (e) {
+		console.warn('[PrintEngine] Bridge not reachable, falling back to browser print', e);
+		return false;
+	}
+}
+
+export async function executePrint(
 	imageDataUrl: string,
 	options: PrintOptions,
 	isPortraitStrip: boolean = true
 ): Promise<boolean> {
-	return new Promise((resolve) => {
-		if (!imageDataUrl) {
-			console.error('[PrintEngine] Error: imageDataUrl is required.');
-			resolve(false);
-			return;
-		}
+	if (!imageDataUrl) {
+		console.error('[PrintEngine] Error: imageDataUrl is required.');
+		return false;
+	}
 
+	// 1. Silent Bluetooth Printing via Local Bridge (58mm / 80mm)
+	if (options.paperSize === '58mm' || options.paperSize === '80mm') {
+		const handled = await tryPrintViaBridge(imageDataUrl, options);
+		if (handled) {
+			return true;
+		}
+	}
+
+	// 2. Fallback to standard browser print iframe
+	return new Promise((resolve) => {
 		// Remove any existing print iframe
 		const existingIframe = document.getElementById('chekiyuume-print-iframe');
 		if (existingIframe) {
