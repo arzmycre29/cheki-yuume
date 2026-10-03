@@ -25,7 +25,9 @@ export interface VideoCompilerOptions {
 function loadImage(src: string): Promise<HTMLImageElement> {
 	return new Promise((resolve) => {
 		const img = new Image();
-		img.crossOrigin = 'anonymous';
+		if (!src.startsWith('data:') && !src.startsWith('blob:')) {
+			img.crossOrigin = 'anonymous';
+		}
 		img.onload = () => resolve(img);
 		img.onerror = () => resolve(img);
 		img.src = src;

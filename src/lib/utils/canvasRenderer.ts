@@ -4,29 +4,15 @@ import type { FrameLayout, PhotoItem, StickerItem } from '$lib/types';
 function loadImage(src: string): Promise<HTMLImageElement> {
 	return new Promise((resolve, reject) => {
 		const img = new Image();
-		img.crossOrigin = 'anonymous';
+		if (!src.startsWith('data:') && !src.startsWith('blob:')) {
+			img.crossOrigin = 'anonymous';
+		}
 		img.onload = () => resolve(img);
 		img.onerror = (e) => reject(e);
 		img.src = src;
 	});
 }
 
-async function generateQrDataUrl(text: string): Promise<string> {
-	try {
-		return await QRCode.toDataURL(text, {
-			width: 320,
-			margin: 1,
-			color: {
-				dark: '#000000',
-				light: '#ffffff'
-			},
-			errorCorrectionLevel: 'M'
-		});
-	} catch (err) {
-		console.warn('[QR] Failed to generate QR code for canvas:', err);
-		return '';
-	}
-}
 
 export interface RenderOptions {
 	layout: FrameLayout;
@@ -122,7 +108,7 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 
 	const isThematicReceipt = layout.id.startsWith('thematic-receipt');
 
-	let qrImg: HTMLImageElement | null = null;
+	let qrCanvas: HTMLCanvasElement | null = null;
 	if (isThematicReceipt && options.isForPrint) {
 		const targetShareUrl = options.shareUrl || (
 			sessionId
@@ -131,10 +117,17 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		);
 		if (targetShareUrl) {
 			try {
-				const qrDataUrl = await generateQrDataUrl(targetShareUrl);
-				if (qrDataUrl) {
-					qrImg = await loadImage(qrDataUrl);
-				}
+				const tempCanvas = document.createElement('canvas');
+				await QRCode.toCanvas(tempCanvas, targetShareUrl, {
+					width: 320,
+					margin: 1,
+					color: {
+						dark: '#000000',
+						light: '#ffffff'
+					},
+					errorCorrectionLevel: 'M'
+				});
+				qrCanvas = tempCanvas;
 			} catch (e) {
 				console.warn('Receipt QR generation error:', e);
 			}
@@ -384,7 +377,7 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 		ctx.stroke();
 		ctx.setLineDash([]);
 
-		if (options.isForPrint && qrImg) {
+		if (options.isForPrint && qrCanvas) {
 			// Physical Print Mode: Render Scannable Download QR Code
 			ctx.textAlign = 'center';
 			ctx.font = '700 20px "Plus Jakarta Sans", monospace';
@@ -396,7 +389,7 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 			const qrSize = 260;
 			const qrX = centerX - qrSize / 2;
 			const qrY = footerTop + 295;
-			ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+			ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
 
 			// Order / Session ID snippet below QR
 			ctx.font = '700 20px "Plus Jakarta Sans", monospace';

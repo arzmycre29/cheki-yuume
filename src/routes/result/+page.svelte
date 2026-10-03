@@ -5,6 +5,8 @@
 	import { settingsStore } from '$lib/stores/settings';
 	import { generateQrCodeDataUrl } from '$lib/services/cloudStorage';
 	import { getSessionFromDB } from '$lib/services/db';
+	import { renderPhotostripCanvas, exportPhotostrip } from '$lib/utils/canvasRenderer';
+	import { getLayoutById } from '$lib/config/frameLayouts';
 	import PrintModal from '$lib/components/PrintModal.svelte';
 	import confetti from 'canvas-confetti';
 	import {
@@ -81,7 +83,12 @@
 				const fromDB = await getSessionFromDB(currentSession.sessionId);
 				if (fromDB && (fromDB.photostripDataUrl || fromDB.videostripUrl)) {
 					if (fromDB.photostripDataUrl) {
-						sessionStore.setPhotostrip(fromDB.photostripDataUrl, fromDB.photostripBlob || new Blob());
+						sessionStore.setPhotostrip(
+							fromDB.photostripDataUrl,
+							fromDB.photostripBlob || new Blob(),
+							fromDB.printPhotostripDataUrl || fromDB.photostripDataUrl,
+							fromDB.printPhotostripBlob || fromDB.photostripBlob || new Blob()
+						);
 					}
 					if (fromDB.videostripBlob && fromDB.videostripUrl) {
 						sessionStore.setVideostrip(fromDB.videostripBlob, fromDB.videostripUrl);
@@ -89,6 +96,50 @@
 				}
 			} catch (e) {
 				console.warn('[Result] Could not fetch session from IndexedDB:', e);
+			}
+		}
+
+		// Self-healing: If thematic receipt has no distinct print version with QR, generate it on the fly
+		if (
+			currentSession.layoutId?.startsWith('thematic-receipt') &&
+			(!currentSession.printPhotostripDataUrl || currentSession.printPhotostripDataUrl === currentSession.photostripDataUrl)
+		) {
+			try {
+				const fromDB = await getSessionFromDB(currentSession.sessionId);
+				if (fromDB?.printPhotostripDataUrl && fromDB.printPhotostripDataUrl !== fromDB.photostripDataUrl) {
+					sessionStore.setPhotostrip(
+						currentSession.photostripDataUrl || fromDB.photostripDataUrl || '',
+						currentSession.photostripBlob || fromDB.photostripBlob || new Blob(),
+						fromDB.printPhotostripDataUrl,
+						fromDB.printPhotostripBlob || new Blob()
+					);
+				} else if (currentSession.photos && currentSession.photos.length > 0) {
+					const layout = getLayoutById(currentSession.layoutId);
+					const basePublicUrl = settings.cloudPublicBaseUrl?.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
+					const shareTargetUrl = `${basePublicUrl}/share/${currentSession.sessionId}`;
+					const printCanvas = await renderPhotostripCanvas({
+						layout,
+						photos: currentSession.photos,
+						slotPhotoIds: currentSession.assignedSlotPhotoIds || [],
+						stickers: currentSession.stickers || [],
+						guestName: currentSession.guestName,
+						sessionId: currentSession.sessionId,
+						brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
+						brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
+						shareUrl: shareTargetUrl,
+						isForPrint: true
+					});
+					const printExport = exportPhotostrip(printCanvas);
+					const pBlob = await printExport.blob;
+					sessionStore.setPhotostrip(
+						currentSession.photostripDataUrl || printExport.dataUrl,
+						currentSession.photostripBlob || pBlob,
+						printExport.dataUrl,
+						pBlob
+					);
+				}
+			} catch (err) {
+				console.warn('[Result] Could not ensure receipt print photostrip:', err);
 			}
 		}
 

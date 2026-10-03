@@ -79,7 +79,21 @@ function persistToSessionStorage(session: SessionData) {
 				timestamp: p.timestamp
 			}))
 		};
-		sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(persistable));
+		try {
+			sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(persistable));
+		} catch (quotaErr) {
+			// If full session exceeds 5MB quota, omit photo raw dataUrls (keep strip images & metadata)
+			const lightweight = {
+				...persistable,
+				photos: (session.photos || []).map((p) => ({
+					id: p.id,
+					index: p.index,
+					dataUrl: '',
+					timestamp: p.timestamp
+				}))
+			};
+			sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(lightweight));
+		}
 	} catch (e) {
 		console.warn('[Session] Failed to save session to sessionStorage', e);
 	}
