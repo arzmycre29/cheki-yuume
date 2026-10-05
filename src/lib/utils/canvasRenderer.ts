@@ -19,13 +19,30 @@ export function recordPrintLog(msg: string) {
 		if (typeof window !== 'undefined') {
 			const existing = JSON.parse(sessionStorage.getItem('chekiyuume_print_debug') || '[]');
 			existing.push(`[${new Date().toISOString().slice(11, 23)}] ${msg}`);
-			sessionStorage.setItem('chekiyuume_print_debug', JSON.stringify(existing.slice(-100)));
 		}
 	} catch (_) {}
 }
 
-
-
+/**
+ * Sanitizes share URL to ensure minimal payload for QR code generation.
+ * Strips heavy query params (?p=...&v=...&n=...) to keep QR matrix chunky,
+ * low-density, and easily scannable on thermal receipt paper.
+ */
+export function getCleanShareUrl(shareUrl?: string, sessionId?: string): string {
+	if (shareUrl) {
+		try {
+			const parsed = new URL(shareUrl, typeof window !== 'undefined' ? window.location.origin : 'https://chekiyuume.app');
+			return `${parsed.origin}${parsed.pathname}`;
+		} catch (_) {
+			return shareUrl.split('?')[0];
+		}
+	}
+	if (sessionId) {
+		const base = typeof window !== 'undefined' ? window.location.origin : 'https://chekiyuume.app';
+		return `${base}/share/${sessionId}`;
+	}
+	return 'https://chekiyuume.app';
+}
 export interface RenderOptions {
 	layout: FrameLayout;
 	photos: PhotoItem[];
@@ -205,24 +222,20 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 	let qrError: string | null = null;
 	if (isThematicReceipt && options.isForPrint) {
 		recordPrintLog(`[canvasRenderer] Preparing print QR: layout=${layout.id}, sessionId=${sessionId || 'NONE'}`);
-		const targetShareUrl = options.shareUrl || (
-			sessionId
-				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `https://chekiyuume.app/share/${sessionId}`)
-				: 'https://chekiyuume.app'
-		);
-		recordPrintLog(`[canvasRenderer] QR targetShareUrl=${targetShareUrl}`);
+		const targetShareUrl = getCleanShareUrl(options.shareUrl, sessionId);
+		recordPrintLog(`[canvasRenderer] Clean QR targetShareUrl=${targetShareUrl}`);
 
 		try {
-			// Primary method: direct toCanvas
+			// Primary method: direct toCanvas with low error correction ('L') for chunky, scannable modules
 			const tempCanvas = document.createElement('canvas');
 			await QRCode.toCanvas(tempCanvas, targetShareUrl, {
-				width: 320,
-				margin: 1,
+				width: 300,
+				margin: 2,
 				color: {
 					dark: '#000000',
 					light: '#ffffff'
 				},
-				errorCorrectionLevel: 'M'
+				errorCorrectionLevel: 'L'
 			});
 			if (tempCanvas && tempCanvas.width > 0) {
 				qrCanvas = tempCanvas;
@@ -235,17 +248,18 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 			recordPrintLog(`[canvasRenderer] QRCode.toCanvas failed: ${errMsg}. Trying toDataURL fallback...`);
 			try {
 				const qrDataUrl = await QRCode.toDataURL(targetShareUrl, {
-					width: 320,
-					margin: 1,
+					width: 300,
+					margin: 2,
 					color: { dark: '#000000', light: '#ffffff' },
-					errorCorrectionLevel: 'M'
+					errorCorrectionLevel: 'L'
 				});
 				const img = await loadImage(qrDataUrl);
 				const fallbackCanvas = document.createElement('canvas');
-				fallbackCanvas.width = img.width || 320;
-				fallbackCanvas.height = img.height || 320;
+				fallbackCanvas.width = img.width || 300;
+				fallbackCanvas.height = img.height || 300;
 				const fctx = fallbackCanvas.getContext('2d');
 				if (fctx) {
+					fctx.imageSmoothingEnabled = false;
 					fctx.drawImage(img, 0, 0);
 					qrCanvas = fallbackCanvas;
 					recordPrintLog(`[canvasRenderer] QRCode toDataURL fallback success`);
@@ -518,7 +532,9 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 			const qrY = qrSectionY + 140;
 
 			if (qrCanvas) {
+				ctx.imageSmoothingEnabled = false;
 				ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+				ctx.imageSmoothingEnabled = true;
 			} else {
 				ctx.save();
 				ctx.fillStyle = '#ffffff';
@@ -685,11 +701,7 @@ export async function injectQrToReceiptPhotostrip(
 		const marginX = 54;
 		const endX = canvasWidth - marginX;
 		const transCode = (sessionId ? sessionId.slice(-8) : 'CKYDEMO').toUpperCase();
-		const targetShareUrl = shareUrl || (
-			sessionId
-				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `https://chekiyuume.app/share/${sessionId}`)
-				: 'https://chekiyuume.app'
-		);
+		const targetShareUrl = getCleanShareUrl(shareUrl, sessionId);
 
 		const qrSectionY = cutY + 15; // ~3340
 
@@ -705,7 +717,7 @@ export async function injectQrToReceiptPhotostrip(
 		ctx.font = '700 46px "Courier New", Courier, monospace';
 		ctx.fillText('PHOTO & VIDEO', centerX, qrSectionY + 75);
 
-		// Generate QR Code (300x300)
+		// Generate QR Code (300x300, Low Error Correction for chunky scannable modules)
 		const qrSize = 300;
 		const qrX = centerX - qrSize / 2;
 		const qrY = qrSectionY + 140;
@@ -713,12 +725,14 @@ export async function injectQrToReceiptPhotostrip(
 		try {
 			const tempCanvas = document.createElement('canvas');
 			await QRCode.toCanvas(tempCanvas, targetShareUrl, {
-				width: 320,
-				margin: 1,
+				width: qrSize,
+				margin: 2,
 				color: { dark: '#000000', light: '#ffffff' },
-				errorCorrectionLevel: 'M'
+				errorCorrectionLevel: 'L'
 			});
+			ctx.imageSmoothingEnabled = false;
 			ctx.drawImage(tempCanvas, qrX, qrY, qrSize, qrSize);
+			ctx.imageSmoothingEnabled = true;
 		} catch (qrErr) {
 			console.warn('[QR Injector] Failed to generate QR canvas:', qrErr);
 			ctx.fillStyle = '#ffffff';

@@ -4,14 +4,23 @@ import { saveSessionToDB } from '$lib/services/db';
 
 export async function generateQrCodeDataUrl(text: string): Promise<string> {
 	try {
-		return await QRCode.toDataURL(text, {
+		let cleanText = text;
+		if (text.startsWith('http://') || text.startsWith('https://')) {
+			try {
+				const url = new URL(text);
+				cleanText = `${url.origin}${url.pathname}`;
+			} catch (_) {
+				cleanText = text.split('?')[0];
+			}
+		}
+		return await QRCode.toDataURL(cleanText, {
 			width: 320,
-			margin: 1,
+			margin: 2,
 			color: {
 				dark: '#000000',
 				light: '#ffffff'
 			},
-			errorCorrectionLevel: 'M'
+			errorCorrectionLevel: 'L'
 		});
 	} catch (err) {
 		console.error('[QR] Failed to generate QR code:', err);
