@@ -21,12 +21,27 @@ import type { PrintOptions, LayoutCategory } from '$lib/types';
  */
 async function tryPrintViaBridge(imageDataUrl: string, options: PrintOptions): Promise<boolean> {
 	try {
-		const statusRes = await fetch('http://127.0.0.1:18080/status', {
-			signal: AbortSignal.timeout(500)
-		});
-		if (!statusRes.ok) return false;
-		const status = await statusRes.json();
-		if (!status.online) return false;
+		const endpoints = ['http://127.0.0.1:18080', 'http://localhost:18080'];
+		let activeEndpoint = '';
+
+		for (const ep of endpoints) {
+			try {
+				const statusRes = await fetch(`${ep}/status`, {
+					signal: AbortSignal.timeout(1200)
+				});
+				if (statusRes.ok) {
+					const status = await statusRes.json();
+					if (status.online) {
+						activeEndpoint = ep;
+						break;
+					}
+				}
+			} catch (_) {
+				// try next endpoint fallback
+			}
+		}
+
+		if (!activeEndpoint) return false;
 
 		const img = new Image();
 		img.src = imageDataUrl;
@@ -60,7 +75,7 @@ async function tryPrintViaBridge(imageDataUrl: string, options: PrintOptions): P
 		const copies = options.sizeMode === 'fit' ? 1 : (options.copies || 1);
 
 		for (let c = 0; c < copies; c++) {
-			const res = await fetch('http://127.0.0.1:18080/print', {
+			const res = await fetch(`${activeEndpoint}/print`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
