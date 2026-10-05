@@ -36,11 +36,7 @@
 	let isPrinting = $state(false);
 	let activePhotostripUrl = $state('');
 	let aspectRatio = $state(0.3125); // Default 1:3 vertical photostrip ratio (1080/3456)
-
-	// Keep activePhotostripUrl aligned whenever input prop changes
-	$effect(() => {
-		activePhotostripUrl = photostripDataUrl;
-	});
+	let hasInitializedForOpen = $state(false);
 
 	// Layout category derived from aspect ratio:
 	// - 'strip': 4-Cut / 3-Cut (< 0.45)
@@ -64,12 +60,20 @@
 		layoutCategory: 'strip'
 	});
 
-	// Preload image to detect exact aspect ratio and initialize category smart defaults
+	// Preload image & initialize smart defaults ONCE per modal opening
 	$effect(() => {
-		if (isOpen && photostripDataUrl) {
+		if (!isOpen) {
+			hasInitializedForOpen = false;
+			return;
+		}
+
+		if (isOpen && !hasInitializedForOpen && photostripDataUrl) {
+			hasInitializedForOpen = true;
+			activePhotostripUrl = photostripDataUrl;
+
 			const activeSessionId = sessionId || $sessionStore.sessionId;
 			const targetShare = shareUrl || $sessionStore.cloudShareUrl;
-			const isReceipt = $sessionStore.mode === 'thematic' || printOptions.paperSize === '58mm' || printOptions.paperSize === '80mm';
+			const isThematicSession = $sessionStore.mode === 'thematic';
 
 			const img = new Image();
 			img.src = photostripDataUrl;
@@ -79,7 +83,7 @@
 
 				// Check if this is a receipt strip needing dynamic QR injection
 				// (Receipt photostrips have ratio < 0.35. Digital receipts have ratio ~0.284 and height < 4100px)
-				if ((isReceipt || ratio < 0.35) && ratio >= 0.25 && img.naturalHeight < 4100 && activeSessionId) {
+				if ((isThematicSession || ratio < 0.35) && ratio >= 0.25 && img.naturalHeight < 4100 && activeSessionId) {
 					console.log('[PrintModal] Detected digital receipt strip without QR. Injecting dynamic QR...');
 					try {
 						const withQr = await injectQrToReceiptPhotostrip(photostripDataUrl, activeSessionId, targetShare);
@@ -96,7 +100,7 @@
 					}
 				}
 
-				const defaultPaper = $sessionStore.mode === 'thematic' ? '58mm' : ($settingsStore.defaultPaperSize || '4R');
+				const defaultPaper = isThematicSession ? '58mm' : ($settingsStore.defaultPaperSize || '4R');
 				printOptions.paperSize = defaultPaper;
 
 				if (ratio < 0.45) {
