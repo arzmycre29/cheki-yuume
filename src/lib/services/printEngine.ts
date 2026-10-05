@@ -43,8 +43,25 @@ async function tryPrintViaBridge(imageDataUrl: string, options: PrintOptions): P
 
 		if (!activeEndpoint) return false;
 
+		let srcToLoad = imageDataUrl;
+		let objectUrlToRevoke: string | null = null;
+
+		if (imageDataUrl.startsWith('http://') || imageDataUrl.startsWith('https://')) {
+			try {
+				const blobRes = await fetch(imageDataUrl, { mode: 'cors' });
+				if (blobRes.ok) {
+					const blob = await blobRes.blob();
+					srcToLoad = URL.createObjectURL(blob);
+					objectUrlToRevoke = srcToLoad;
+				}
+			} catch (fetchErr) {
+				console.warn('[PrintEngine] CORS blob fetch failed, falling back to direct load:', fetchErr);
+			}
+		}
+
 		const img = new Image();
-		img.src = imageDataUrl;
+		img.crossOrigin = 'anonymous';
+		img.src = srcToLoad;
 		await new Promise<void>((resolve, reject) => {
 			img.onload = () => resolve();
 			img.onerror = reject;
@@ -58,10 +75,14 @@ async function tryPrintViaBridge(imageDataUrl: string, options: PrintOptions): P
 		canvas.width = targetWidth;
 		canvas.height = targetHeight;
 		const ctx = canvas.getContext('2d');
-		if (!ctx) return false;
+		if (!ctx) {
+			if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
+			return false;
+		}
 
 		ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 		const imgData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+		if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
 		const uint8 = new Uint8Array(imgData.data.buffer);
 
 		let binary = '';

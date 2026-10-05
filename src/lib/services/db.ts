@@ -28,6 +28,33 @@ function openDB(): Promise<IDBDatabase> {
 	});
 }
 
+function sanitizeForIDB<T>(val: T, seen = new WeakSet()): T {
+	if (val === null || val === undefined) return val;
+	if (typeof val !== 'object' && typeof val !== 'function') return val;
+	if (typeof val === 'function') return undefined as any;
+	if (val instanceof Blob || val instanceof File || val instanceof Date || val instanceof ArrayBuffer) {
+		return val;
+	}
+	if (typeof Node !== 'undefined' && val instanceof Node) return undefined as any;
+	if (seen.has(val as object)) return undefined as any;
+	seen.add(val as object);
+
+	if (Array.isArray(val)) {
+		return (val as any[])
+			.map((item) => sanitizeForIDB(item, seen))
+			.filter((item) => item !== undefined) as any;
+	}
+
+	const clean: Record<string, any> = {};
+	for (const key of Object.keys(val as object)) {
+		const prop = sanitizeForIDB((val as any)[key], seen);
+		if (prop !== undefined) {
+			clean[key] = prop;
+		}
+	}
+	return clean as T;
+}
+
 export async function saveSessionToDB(session: SessionData): Promise<void> {
 	try {
 		if (!session || !session.sessionId || typeof session.sessionId !== 'string' || !session.sessionId.trim()) {
@@ -37,8 +64,9 @@ export async function saveSessionToDB(session: SessionData): Promise<void> {
 		const db = await openDB();
 		const tx = db.transaction(STORE_SESSIONS, 'readwrite');
 		const store = tx.objectStore(STORE_SESSIONS);
+		const cleanSession = sanitizeForIDB(session);
 		await new Promise<void>((resolve, reject) => {
-			const req = store.put(session);
+			const req = store.put(cleanSession);
 			req.onsuccess = () => resolve();
 			req.onerror = () => reject(req.error);
 		});
