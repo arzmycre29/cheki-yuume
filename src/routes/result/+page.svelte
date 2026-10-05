@@ -5,7 +5,7 @@
 	import { settingsStore } from '$lib/stores/settings';
 	import { generateQrCodeDataUrl } from '$lib/services/cloudStorage';
 	import { getSessionFromDB } from '$lib/services/db';
-	import { renderPhotostripCanvas, exportPhotostrip } from '$lib/utils/canvasRenderer';
+	import { renderPhotostripCanvas, exportPhotostrip, injectQrToReceiptPhotostrip } from '$lib/utils/canvasRenderer';
 	import { getLayoutById } from '$lib/config/frameLayouts';
 	import PrintModal from '$lib/components/PrintModal.svelte';
 	import confetti from 'canvas-confetti';
@@ -68,29 +68,45 @@
 		isRegeneratingReceipt = true;
 		try {
 			console.log('[Result] Force regenerating receipt print canvas...');
-			const layout = getLayoutById(session.layoutId || 'thematic-receipt-classic');
 			const basePublicUrl = settings.cloudPublicBaseUrl?.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
-			const shareTargetUrl = `${basePublicUrl}/share/${session.sessionId}`;
-			const printCanvas = await renderPhotostripCanvas({
-				layout,
-				photos: session.photos,
-				slotPhotoIds: session.assignedSlotPhotoIds || [],
-				stickers: session.stickers || [],
-				guestName: session.guestName,
-				sessionId: session.sessionId,
-				brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
-				brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
-				shareUrl: shareTargetUrl,
-				isForPrint: true
-			});
-			const printExport = exportPhotostrip(printCanvas);
-			const pBlob = await printExport.blob;
-			sessionStore.setPhotostrip(
-				session.photostripDataUrl || printExport.dataUrl,
-				session.photostripBlob || pBlob,
-				printExport.dataUrl,
-				pBlob
-			);
+			const shareTargetUrl = session.cloudShareUrl || `${basePublicUrl}/share/${session.sessionId}`;
+
+			if (session.photos && session.photos.length > 0 && session.photos.some((p) => !!p.dataUrl)) {
+				const layout = getLayoutById(session.layoutId || 'thematic-receipt-classic');
+				const printCanvas = await renderPhotostripCanvas({
+					layout,
+					photos: session.photos,
+					slotPhotoIds: session.assignedSlotPhotoIds || [],
+					stickers: session.stickers || [],
+					guestName: session.guestName,
+					sessionId: session.sessionId,
+					brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
+					brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
+					shareUrl: shareTargetUrl,
+					isForPrint: true
+				});
+				const printExport = exportPhotostrip(printCanvas);
+				const pBlob = await printExport.blob;
+				sessionStore.setPhotostrip(
+					session.photostripDataUrl || printExport.dataUrl,
+					session.photostripBlob || pBlob,
+					printExport.dataUrl,
+					pBlob
+				);
+			} else if (session.photostripDataUrl) {
+				const withQr = await injectQrToReceiptPhotostrip(
+					session.photostripDataUrl,
+					session.sessionId,
+					shareTargetUrl
+				);
+				if (withQr && withQr !== session.photostripDataUrl) {
+					sessionStore.setPhotostrip(
+						session.photostripDataUrl,
+						session.photostripBlob || new Blob(),
+						withQr
+					);
+				}
+			}
 			sessionStore.finalizeAndSaveSession();
 			loadAllDebugLogs();
 			alert('Berhasil meregenerasi photostrip struk dengan QR Code!');
@@ -108,31 +124,47 @@
 			isPreparingPrintModal = true;
 			try {
 				const needsRegen = !session.printPhotostripDataUrl || session.printPhotostripDataUrl === session.photostripDataUrl;
-				if (needsRegen && session.photos && session.photos.length > 0) {
+				if (needsRegen) {
 					console.log('[Result] Ensuring fresh receipt print canvas with QR before opening print dialog...');
-					const layout = getLayoutById(session.layoutId || 'thematic-receipt-classic');
 					const basePublicUrl = settings.cloudPublicBaseUrl?.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
-					const shareTargetUrl = `${basePublicUrl}/share/${session.sessionId}`;
-					const printCanvas = await renderPhotostripCanvas({
-						layout,
-						photos: session.photos,
-						slotPhotoIds: session.assignedSlotPhotoIds || [],
-						stickers: session.stickers || [],
-						guestName: session.guestName,
-						sessionId: session.sessionId,
-						brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
-						brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
-						shareUrl: shareTargetUrl,
-						isForPrint: true
-					});
-					const printExport = exportPhotostrip(printCanvas);
-					const pBlob = await printExport.blob;
-					sessionStore.setPhotostrip(
-						session.photostripDataUrl || printExport.dataUrl,
-						session.photostripBlob || pBlob,
-						printExport.dataUrl,
-						pBlob
-					);
+					const shareTargetUrl = session.cloudShareUrl || `${basePublicUrl}/share/${session.sessionId}`;
+
+					if (session.photos && session.photos.length > 0 && session.photos.some((p) => !!p.dataUrl)) {
+						const layout = getLayoutById(session.layoutId || 'thematic-receipt-classic');
+						const printCanvas = await renderPhotostripCanvas({
+							layout,
+							photos: session.photos,
+							slotPhotoIds: session.assignedSlotPhotoIds || [],
+							stickers: session.stickers || [],
+							guestName: session.guestName,
+							sessionId: session.sessionId,
+							brandingTitle: settings.kioskTitle || 'CHEKIYUUME',
+							brandingSubtitle: settings.kioskSubtitle || 'PHOTOBOOTH STUDIO',
+							shareUrl: shareTargetUrl,
+							isForPrint: true
+						});
+						const printExport = exportPhotostrip(printCanvas);
+						const pBlob = await printExport.blob;
+						sessionStore.setPhotostrip(
+							session.photostripDataUrl || printExport.dataUrl,
+							session.photostripBlob || pBlob,
+							printExport.dataUrl,
+							pBlob
+						);
+					} else if (session.photostripDataUrl) {
+						const withQr = await injectQrToReceiptPhotostrip(
+							session.photostripDataUrl,
+							session.sessionId,
+							shareTargetUrl
+						);
+						if (withQr && withQr !== session.photostripDataUrl) {
+							sessionStore.setPhotostrip(
+								session.photostripDataUrl,
+								session.photostripBlob || new Blob(),
+								withQr
+							);
+						}
+					}
 				}
 			} catch (err) {
 				console.error('[Result] handleOpenPrintModal error:', err);
@@ -573,6 +605,8 @@
 	<PrintModal
 		isOpen={isPrintModalOpen}
 		photostripDataUrl={session.printPhotostripDataUrl || session.photostripDataUrl}
+		sessionId={session.sessionId}
+		shareUrl={session.cloudShareUrl || ''}
 		onClose={() => (isPrintModalOpen = false)}
 	/>
 {/if}

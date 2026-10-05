@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PrintOptions, LayoutCategory } from '$lib/types';
 	import { executePrint } from '$lib/services/printEngine';
+	import { injectQrToReceiptPhotostrip } from '$lib/utils/canvasRenderer';
 	import { sessionStore } from '$lib/stores/session';
 	import { settingsStore } from '$lib/stores/settings';
 	import {
@@ -26,12 +27,20 @@
 		photostripDataUrl: string;
 		onClose: () => void;
 		onPrintSuccess?: () => void;
+		sessionId?: string;
+		shareUrl?: string;
 	}
 
-	let { isOpen, photostripDataUrl, onClose, onPrintSuccess }: Props = $props();
+	let { isOpen, photostripDataUrl, onClose, onPrintSuccess, sessionId, shareUrl }: Props = $props();
 
 	let isPrinting = $state(false);
+	let activePhotostripUrl = $state('');
 	let aspectRatio = $state(0.3125); // Default 1:3 vertical photostrip ratio (1080/3456)
+
+	// Keep activePhotostripUrl aligned whenever input prop changes
+	$effect(() => {
+		activePhotostripUrl = photostripDataUrl;
+	});
 
 	// Layout category derived from aspect ratio:
 	// - 'strip': 4-Cut / 3-Cut (< 0.45)
@@ -58,11 +67,34 @@
 	// Preload image to detect exact aspect ratio and initialize category smart defaults
 	$effect(() => {
 		if (isOpen && photostripDataUrl) {
+			const activeSessionId = sessionId || $sessionStore.sessionId;
+			const targetShare = shareUrl || $sessionStore.cloudShareUrl;
+			const isReceipt = $sessionStore.mode === 'thematic' || printOptions.paperSize === '58mm' || printOptions.paperSize === '80mm';
+
 			const img = new Image();
 			img.src = photostripDataUrl;
-			img.onload = () => {
+			img.onload = async () => {
 				const ratio = img.naturalWidth / img.naturalHeight;
 				aspectRatio = ratio;
+
+				// Check if this is a receipt strip needing dynamic QR injection
+				// (Receipt photostrips have ratio < 0.35. Digital receipts have ratio ~0.284 and height < 4100px)
+				if ((isReceipt || ratio < 0.35) && ratio >= 0.25 && img.naturalHeight < 4100 && activeSessionId) {
+					console.log('[PrintModal] Detected digital receipt strip without QR. Injecting dynamic QR...');
+					try {
+						const withQr = await injectQrToReceiptPhotostrip(photostripDataUrl, activeSessionId, targetShare);
+						if (withQr && withQr !== photostripDataUrl) {
+							activePhotostripUrl = withQr;
+							const qImg = new Image();
+							qImg.src = withQr;
+							qImg.onload = () => {
+								aspectRatio = qImg.naturalWidth / qImg.naturalHeight;
+							};
+						}
+					} catch (e) {
+						console.warn('[PrintModal] Dynamic QR injection warning:', e);
+					}
+				}
 
 				const defaultPaper = $sessionStore.mode === 'thematic' ? '58mm' : ($settingsStore.defaultPaperSize || '4R');
 				printOptions.paperSize = defaultPaper;
@@ -156,11 +188,11 @@
 			printOptions.layoutCategory = layoutCategory;
 			try {
 				const existing = JSON.parse(sessionStorage.getItem('chekiyuume_print_debug') || '[]');
-				existing.push(`[${new Date().toISOString().slice(11, 23)}] [PrintModal] Starting executePrint: paperSize=${printOptions.paperSize}, copies=${printOptions.copies}, dataUrlLength=${photostripDataUrl?.length ?? 0}`);
+				existing.push(`[${new Date().toISOString().slice(11, 23)}] [PrintModal] Starting executePrint: paperSize=${printOptions.paperSize}, copies=${printOptions.copies}, dataUrlLength=${activePhotostripUrl?.length ?? 0}`);
 				sessionStorage.setItem('chekiyuume_print_debug', JSON.stringify(existing.slice(-100)));
 			} catch (_) {}
 
-			const success = await executePrint(photostripDataUrl, printOptions, isPortraitStrip);
+			const success = await executePrint(activePhotostripUrl, printOptions, isPortraitStrip);
 			if (success) {
 				if (onPrintSuccess) {
 					onPrintSuccess();
@@ -305,7 +337,7 @@
 											{/if}
 											<div class="w-full p-1 flex justify-center">
 												<img
-													src={photostripDataUrl}
+													src={activePhotostripUrl}
 													alt="Thermal Strip {i + 1}"
 													class="w-full object-contain shadow-xs border border-zinc-200"
 												/>
@@ -335,7 +367,7 @@
 											{#if isActive}
 												<div class="w-[74%] h-[90%] relative overflow-hidden flex items-center justify-center pointer-events-none">
 													<img
-														src={photostripDataUrl}
+														src={activePhotostripUrl}
 														alt="Rotated Strip"
 														class="absolute top-1/2 left-1/2 object-contain shadow-xs border border-zinc-400/40"
 														style="
@@ -376,7 +408,7 @@
 										>
 											{#if isActive}
 												<img
-													src={photostripDataUrl}
+													src={activePhotostripUrl}
 													alt="Grid Item {qIdx + 1}"
 													class="object-contain shadow-xs border border-zinc-300 {layoutCategory === 'card'
 														? 'max-h-[85%] max-w-[85%]'
@@ -395,18 +427,18 @@
 								{#if printOptions.copies === 2}
 									<div class="w-full h-full flex flex-col justify-around items-center p-2 relative">
 										<div class="absolute inset-x-0 top-1/2 border-t border-dashed border-zinc-300"></div>
-										<img src={photostripDataUrl} alt="Card 1" class="max-h-[44%] max-w-[85%] object-contain shadow-xs border border-zinc-300" />
-										<img src={photostripDataUrl} alt="Card 2" class="max-h-[44%] max-w-[85%] object-contain shadow-xs border border-zinc-300" />
+										<img src={activePhotostripUrl} alt="Card 1" class="max-h-[44%] max-w-[85%] object-contain shadow-xs border border-zinc-300" />
+										<img src={activePhotostripUrl} alt="Card 2" class="max-h-[44%] max-w-[85%] object-contain shadow-xs border border-zinc-300" />
 									</div>
 								{:else}
 									<div class="w-full h-full flex items-center justify-center p-3">
-										<img src={photostripDataUrl} alt="Card Single" class="max-h-[75%] max-w-[85%] object-contain shadow-xs border border-zinc-300" />
+										<img src={activePhotostripUrl} alt="Card Single" class="max-h-[75%] max-w-[85%] object-contain shadow-xs border border-zinc-300" />
 									</div>
 								{/if}
 							{:else if printOptions.sizeMode === 'fit'}
 								<!-- 4. Fit-to-Page Preview -->
 								<div class="w-full h-full flex items-center justify-center p-2">
-									<img src={photostripDataUrl} alt="Fit Preview" class="w-full h-full object-contain shadow-xs" />
+									<img src={activePhotostripUrl} alt="Fit Preview" class="w-full h-full object-contain shadow-xs" />
 								</div>
 							{:else}
 								<!-- 5. Standard Portrait / Multi-copies Preview -->
@@ -418,7 +450,7 @@
 								>
 									{#each Array(printOptions.copies || 1) as _, i}
 										<img
-											src={photostripDataUrl}
+											src={activePhotostripUrl}
 											alt="Strip Copy {i + 1}"
 											class="object-contain shadow-xs border border-zinc-300 max-h-[90%] bg-white"
 											style="width: {portraitScalePercent}%;"

@@ -642,6 +642,121 @@ export async function renderPhotostripCanvas(options: RenderOptions): Promise<HT
 }
 
 /**
+ * Dynamically injects a scannable download QR code into a digital receipt photostrip.
+ * Ensures receipts printed via PC/Admin/Live-Web always carry the official QR code
+ * even if the original session only has a digital-only asset (e.g. synced from mobile/cloud).
+ */
+export async function injectQrToReceiptPhotostrip(
+	digitalImageDataUrl: string,
+	sessionId: string,
+	shareUrl?: string
+): Promise<string> {
+	if (!digitalImageDataUrl) return digitalImageDataUrl;
+
+	try {
+		const img = await loadImage(digitalImageDataUrl);
+		// If image is already physical print height (>= 4100px) or aspect ratio < 0.26, it already has QR
+		const ratio = img.naturalWidth / img.naturalHeight;
+		if (img.naturalHeight >= 4100 || ratio < 0.26) {
+			return digitalImageDataUrl;
+		}
+
+		// Digital receipt is standard 3800px height. Print receipt is 4350px.
+		const canvasWidth = img.naturalWidth || 1080;
+		const canvasHeight = 4350;
+		const canvas = document.createElement('canvas');
+		canvas.width = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d', { alpha: false });
+		if (!ctx) return digitalImageDataUrl;
+
+		// Crisp white background
+		ctx.fillStyle = '#FFFFFF';
+		ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+		// Cut point: Dashed divider under TOTAL line is at 3325px of the 3800px digital receipt
+		const cutY = Math.round(img.naturalHeight * (3325 / 3800));
+
+		// 1. Draw top portion (Header, metadata, 3 photos, grocery table, TOTAL line)
+		ctx.drawImage(img, 0, 0, img.naturalWidth, cutY, 0, 0, canvasWidth, cutY);
+
+		// 2. Render injected QR section (from ~3325px to ~3863px)
+		const centerX = canvasWidth / 2;
+		const marginX = 54;
+		const endX = canvasWidth - marginX;
+		const transCode = (sessionId ? sessionId.slice(-8) : 'CKYDEMO').toUpperCase();
+		const targetShareUrl = shareUrl || (
+			sessionId
+				? (typeof window !== 'undefined' ? `${window.location.origin}/share/${sessionId}` : `https://chekiyuume.app/share/${sessionId}`)
+				: 'https://chekiyuume.app'
+		);
+
+		const qrSectionY = cutY + 15; // ~3340
+
+		ctx.save();
+		ctx.textBaseline = 'top';
+		ctx.textAlign = 'center';
+		ctx.fillStyle = '#111111';
+
+		// QR Header (Giant readable monospace)
+		ctx.font = '800 54px "Courier New", Courier, monospace';
+		ctx.fillText('SCAN TO DOWNLOAD', centerX, qrSectionY + 10);
+
+		ctx.font = '700 46px "Courier New", Courier, monospace';
+		ctx.fillText('PHOTO & VIDEO', centerX, qrSectionY + 75);
+
+		// Generate QR Code (300x300)
+		const qrSize = 300;
+		const qrX = centerX - qrSize / 2;
+		const qrY = qrSectionY + 140;
+
+		try {
+			const tempCanvas = document.createElement('canvas');
+			await QRCode.toCanvas(tempCanvas, targetShareUrl, {
+				width: 320,
+				margin: 1,
+				color: { dark: '#000000', light: '#ffffff' },
+				errorCorrectionLevel: 'M'
+			});
+			ctx.drawImage(tempCanvas, qrX, qrY, qrSize, qrSize);
+		} catch (qrErr) {
+			console.warn('[QR Injector] Failed to generate QR canvas:', qrErr);
+			ctx.fillStyle = '#ffffff';
+			ctx.fillRect(qrX, qrY, qrSize, qrSize);
+			ctx.strokeStyle = '#111111';
+			ctx.lineWidth = 4;
+			ctx.strokeRect(qrX, qrY, qrSize, qrSize);
+			ctx.fillStyle = '#111111';
+			ctx.font = 'bold 30px monospace';
+			ctx.fillText('CHEKIYUUME QR', centerX, qrY + 145);
+		}
+
+		// Order / Session snippet below QR
+		const transNoticeY = qrY + qrSize + 22;
+		ctx.font = '700 48px "Courier New", Courier, monospace';
+		ctx.fillStyle = '#111111';
+		ctx.fillText(`* #TR-${transCode} *`, centerX, transNoticeY);
+
+		// Divider before Barcode
+		const barcodeSectionY = transNoticeY + 62;
+		drawReceiptDivider(ctx, marginX, endX, barcodeSectionY, 'dash');
+		ctx.restore();
+
+		// 3. Draw bottom portion (Barcode & Thank you note)
+		// Bottom starts right after the dashed divider in digital image
+		const srcBottomY = Math.round(img.naturalHeight * (3345 / 3800));
+		const remainingSrcHeight = img.naturalHeight - srcBottomY;
+		const destBottomY = barcodeSectionY + 6;
+		ctx.drawImage(img, 0, srcBottomY, img.naturalWidth, remainingSrcHeight, 0, destBottomY, canvasWidth, remainingSrcHeight);
+
+		return canvas.toDataURL('image/png');
+	} catch (err) {
+		console.error('[QR Injector] Error injecting QR into receipt photostrip:', err);
+		return digitalImageDataUrl;
+	}
+}
+
+/**
  * Export canvas to PNG Data URL and Blob
  */
 export function exportPhotostrip(canvas: HTMLCanvasElement): { dataUrl: string; blob: Promise<Blob> } {
@@ -654,3 +769,4 @@ export function exportPhotostrip(canvas: HTMLCanvasElement): { dataUrl: string; 
 	});
 	return { dataUrl, blob };
 }
+

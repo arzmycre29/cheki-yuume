@@ -3018,6 +3018,8 @@
 		<PrintModal
 			isOpen={isRePrintModalOpen}
 			photostripDataUrl={rePrintSession.printPhotostripDataUrl || rePrintSession.photostripDataUrl}
+			sessionId={rePrintSession.sessionId}
+			shareUrl={rePrintSession.cloudShareUrl || ''}
 			onClose={() => { isRePrintModalOpen = false; rePrintSession = null; }}
 			onPrintSuccess={async () => {
 				if (rePrintSession && rePrintSession.sessionId) {
