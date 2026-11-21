@@ -161,14 +161,23 @@
 				const latestSession = get(sessionStore);
 				console.log(`[ProcessingCloud] Starting cloud upload for session "${latestSession.sessionId}" (${latestSession.guestName || 'Tamu'})...`);
 				const uploadRes = await uploadSessionToCloud(latestSession, settings);
-				console.log('[ProcessingCloud] ✓ Cloud upload completed:', uploadRes);
-				sessionStore.setCloudUploadStatus('success', {
-					photo: uploadRes.photoUrl || undefined,
-					video: uploadRes.videoUrl || undefined,
-					share: uploadRes.shareUrl
-				});
+				if (uploadRes.photoUrl) {
+					console.log('[ProcessingCloud] ✓ Cloud upload completed:', uploadRes);
+					sessionStore.setCloudUploadStatus('success', {
+						photo: uploadRes.photoUrl,
+						video: uploadRes.videoUrl || undefined,
+						share: uploadRes.shareUrl
+					});
+				} else {
+					const fallbackStatus = settings.cloudProvider === 'none' ? 'idle' : 'failed';
+					console.log(`[ProcessingCloud] Saved offline (status=${fallbackStatus}), will sync when online:`, uploadRes);
+					sessionStore.setCloudUploadStatus(fallbackStatus, {
+						share: uploadRes.shareUrl
+					});
+				}
 			} catch (cloudErr) {
 				console.error('[ProcessingCloud] ✗ Cloud upload error (offline fallback mode active):', cloudErr);
+				sessionStore.setCloudUploadStatus('failed');
 			}
 
 			// Finish!

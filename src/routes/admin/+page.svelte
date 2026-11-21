@@ -4,7 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { sessionStore } from '$lib/stores/session';
 	import { settingsStore } from '$lib/stores/settings';
-	import { networkStore } from '$lib/services/networkStatus';
+	import { networkStore, syncPendingOfflineSessions } from '$lib/services/networkStatus';
 	import { customFramesStore } from '$lib/stores/customFrames';
 	import { cameraService, type VideoDeviceInfo } from '$lib/services/camera';
 	import { uvcCameraService, type UvcCaptureResult } from '$lib/services/uvcCamera';
@@ -283,6 +283,15 @@
 		settingsStore.updateSettings(formSettings);
 		saveMessage = 'Pengaturan berhasil disimpan!';
 		setTimeout(() => (saveMessage = ''), 3000);
+
+		// If admin just switched back to Cloudinary online mode, automatically sync any pending offline sessions
+		if (
+			formSettings.cloudProvider === 'cloudinary' &&
+			formSettings.cloudinaryCloudName?.trim() &&
+			formSettings.cloudinaryUploadPreset?.trim()
+		) {
+			void syncPendingOfflineSessions().then(() => loadSessions());
+		}
 	}
 
 	async function handleDeleteSession(sessionId: string) {
@@ -305,10 +314,10 @@
 		sessions.filter((s) => selectedSessionIds.includes(s.sessionId))
 	);
 	let selectedUnbackedSessions = $derived(
-		selectedSessions.filter((s) => !s.cloudPhotoUrl && s.cloudUploadStatus !== 'success')
+		selectedSessions.filter((s) => !s.cloudPhotoUrl)
 	);
 	let unbackedSessions = $derived(
-		sessions.filter((s) => !s.cloudPhotoUrl && s.cloudUploadStatus !== 'success')
+		sessions.filter((s) => !s.cloudPhotoUrl)
 	);
 
 	let isSinglePullModalOpen = $state(false);
@@ -366,7 +375,7 @@
 			return;
 		}
 
-		const toUpload = selectedSessions.filter((s) => !s.cloudPhotoUrl && s.cloudUploadStatus !== 'success');
+		const toUpload = selectedSessions.filter((s) => !s.cloudPhotoUrl);
 		if (toUpload.length === 0) {
 			alert('Seluruh sesi yang Anda pilih sudah pernah di-backup ke Cloudinary. Tidak ada data baru yang perlu diunggah ulang.');
 			return;

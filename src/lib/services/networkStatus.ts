@@ -51,7 +51,6 @@ export async function syncPendingOfflineSessions(): Promise<void> {
 		const allSessions = await getAllSessionsFromDB();
 		const pending = allSessions.filter(
 			(s) =>
-				s.cloudUploadStatus !== 'success' &&
 				!s.cloudPhotoUrl &&
 				Boolean(s.photostripBlob || s.photostripDataUrl)
 		);
