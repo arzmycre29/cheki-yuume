@@ -50,21 +50,60 @@
 		for (let attempt = 1; attempt <= maxRetries; attempt++) {
 			syncAttempt = attempt;
 			try {
-				console.log(`[Share] Attempt ${attempt}/${maxRetries}: Checking cloud manifest for session "${sId}"...`);
+				console.log(`[Share] Attempt ${attempt}/${maxRetries}: Checking Cloudflare D1 for session "${sId}"...`);
 
-				// 1. Safe query to /api/manifest?type=sessions&id=... (Server filters ONLY this session)
-				const apiEndpoints = [
-					`/api/manifest?type=sessions&id=${encodeURIComponent(sId)}&_t=${Date.now()}`
+				const isLocalhost =
+					typeof window !== 'undefined' &&
+					(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+				// 1. Primary 1-hit lookup via Cloudflare D1 (/api/sessions/:id)
+				const primaryEndpoints = [
+					`/api/sessions/${encodeURIComponent(sId)}?_t=${Date.now()}`
 				];
-				if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-					apiEndpoints.push(`https://cheki-yuume.pages.dev/api/manifest?type=sessions&id=${encodeURIComponent(sId)}&_t=${Date.now()}`);
+				if (isLocalhost) {
+					primaryEndpoints.push(
+						`https://cheki-yuume.pages.dev/api/sessions/${encodeURIComponent(sId)}?_t=${Date.now()}`
+					);
 				}
 
-				for (const endpoint of apiEndpoints) {
+				for (const endpoint of primaryEndpoints) {
 					try {
 						const res = await fetch(endpoint, {
 							cache: 'no-store',
-							headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
+							headers: { 'Cache-Control': 'no-cache', Accept: 'application/json' }
+						});
+						if (res.ok) {
+							const data = await res.json();
+							const found = data?.session;
+							if (found && (found.photoUrl || found.videoUrl)) {
+								cloudPhotoUrl = found.photoUrl || null;
+								cloudVideoUrl = found.videoUrl || null;
+								cloudGuestName = found.guestName || null;
+								syncStatus = 'found';
+								console.log('[Share] ✓ Session media found via /api/sessions:', found);
+								return true;
+							}
+						}
+					} catch (apiErr) {
+						console.warn('[Share] /api/sessions fetch warning:', apiErr);
+					}
+				}
+
+				// 2. Secondary compatibility fallback via /api/manifest?type=sessions&id=...
+				const manifestEndpoints = [
+					`/api/manifest?type=sessions&id=${encodeURIComponent(sId)}&_t=${Date.now()}`
+				];
+				if (isLocalhost) {
+					manifestEndpoints.push(
+						`https://cheki-yuume.pages.dev/api/manifest?type=sessions&id=${encodeURIComponent(sId)}&_t=${Date.now()}`
+					);
+				}
+
+				for (const endpoint of manifestEndpoints) {
+					try {
+						const res = await fetch(endpoint, {
+							cache: 'no-store',
+							headers: { 'Cache-Control': 'no-cache', Accept: 'application/json' }
 						});
 						if (res.ok) {
 							const data = await res.json();
@@ -83,7 +122,7 @@
 					}
 				}
 
-				// 2. Direct per-session candidate lookup on Cloudinary
+				// 3. Per-session legacy folder manifest fallback (private to this sessionId only)
 				let cloudName = 'qhdvucyw';
 				try {
 					const cfgRes = await fetch('/api/config');
@@ -102,56 +141,28 @@
 					candidateFolderNames.unshift(`${cleanQueryName}_${encodeURIComponent(sId)}`);
 				}
 
-				const candidateUrls: string[] = [];
 				for (const f of candidateFolderNames) {
-					candidateUrls.push(
+					const candidateUrls = [
 						`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions/${f}/manifest.json?_t=${Date.now()}`,
 						`https://res.cloudinary.com/${cloudName}/raw/upload/v1/chekiyuume/sessions/${f}/manifest.json?_t=${Date.now()}`
-					);
-				}
-
-				for (const cUrl of candidateUrls) {
-					try {
-						const cRes = await fetch(cUrl, { cache: 'no-store' });
-						if (cRes.ok) {
-							const cJson = await cRes.json();
-							if (cJson && (cJson.sessionId === sId || !cJson.sessionId) && (cJson.photoUrl || cJson.videoUrl)) {
-								cloudPhotoUrl = cJson.photoUrl || null;
-								cloudVideoUrl = cJson.videoUrl || null;
-								cloudGuestName = cJson.guestName || null;
-								syncStatus = 'found';
-								console.log('[Share] ✓ Per-session manifest found:', cJson);
-								return true;
+					];
+					for (const cUrl of candidateUrls) {
+						try {
+							const cRes = await fetch(cUrl, { cache: 'no-store' });
+							if (cRes.ok) {
+								const cJson = await cRes.json();
+								if (cJson && (cJson.sessionId === sId || !cJson.sessionId) && (cJson.photoUrl || cJson.videoUrl)) {
+									cloudPhotoUrl = cJson.photoUrl || null;
+									cloudVideoUrl = cJson.videoUrl || null;
+									cloudGuestName = cJson.guestName || null;
+									syncStatus = 'found';
+									console.log('[Share] ✓ Per-session legacy manifest found:', cJson);
+									return true;
+								}
 							}
-						}
-					} catch (_) {}
+						} catch (_) {}
+					}
 				}
-
-				// 3. Fallback to global Cloudinary sessions_manifest.json
-				const globalManifestCandidates = [
-					`https://res.cloudinary.com/${cloudName}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`,
-					`https://res.cloudinary.com/${cloudName}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`
-				];
-
-				for (const gUrl of globalManifestCandidates) {
-					try {
-						const gRes = await fetch(gUrl, { cache: 'no-store' });
-						if (gRes.ok) {
-							const gData = await gRes.json();
-							const list = Array.isArray(gData?.sessions) ? gData.sessions : Array.isArray(gData) ? gData : [];
-							const foundInGlobal = list.find((s: any) => s && s.sessionId === sId);
-							if (foundInGlobal && (foundInGlobal.photoUrl || foundInGlobal.videoUrl)) {
-								cloudPhotoUrl = foundInGlobal.photoUrl || null;
-								cloudVideoUrl = foundInGlobal.videoUrl || null;
-								cloudGuestName = foundInGlobal.guestName || null;
-								syncStatus = 'found';
-								console.log('[Share] ✓ Session found in global sessions_manifest.json:', foundInGlobal);
-								return true;
-							}
-						}
-					} catch (_) {}
-				}
-
 			} catch (err) {
 				console.warn(`[Share] Attempt ${attempt} failed:`, err);
 			}

@@ -6,8 +6,8 @@
 	import { networkStore, initNetworkMonitor } from '$lib/services/networkStatus';
 	import { isFullscreen, toggleFullscreen, onFullscreenChange } from '$lib/utils/fullscreen';
 	import { customFramesStore } from '$lib/stores/customFrames';
-	import { retrieveCustomFramesFromCloudinary } from '$lib/services/cloudStorage';
-	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2, WifiOff, CheckCircle2, Eye, EyeOff } from '@lucide/svelte';
+	import { retrieveCustomFramesFromCloudDB } from '$lib/services/cloudStorage';
+	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2, WifiOff, CheckCircle2, Eye, EyeOff, RefreshCw } from '@lucide/svelte';
 
 	let { children } = $props();
 
@@ -45,17 +45,15 @@
 			})
 			.catch(() => {});
 
-		// Background auto-reconcile custom frames with Cloudinary manifest on startup
+		// Background auto-reconcile custom frames with Cloudflare D1 (and legacy Cloudinary fallback) on startup
 		const settings = $settingsStore;
-		if (settings.cloudProvider === 'cloudinary' && settings.cloudinaryCloudName?.trim()) {
-			retrieveCustomFramesFromCloudinary(settings.cloudinaryCloudName)
-				.then((res) => {
-					if (res.success) {
-						customFramesStore.syncFromRemote(res.frames);
-					}
-				})
-				.catch(() => {});
-		}
+		retrieveCustomFramesFromCloudDB(settings.cloudinaryCloudName)
+			.then((res) => {
+				if (res.success) {
+					customFramesStore.syncFromRemote(res.frames);
+				}
+			})
+			.catch(() => {});
 
 		return () => {
 			unbindFullscreen();
@@ -158,6 +156,11 @@
 			<span class="flex h-2 w-2 rounded-full bg-red-600 animate-ping"></span>
 			<WifiOff class="h-3.5 w-3.5" />
 			<span>Mode Offline Aktif (Sesi Disimpan ke Database Lokal)</span>
+		</div>
+	{:else if $networkStore.isAutoSyncing}
+		<div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-indigo-600/95 text-white px-4 py-1.5 rounded-full text-xs font-black shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-none select-none border border-indigo-400">
+			<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+			<span>Menyinkronkan {$networkStore.pendingSyncCount} sesi offline ke Cloud...</span>
 		</div>
 	{:else if $networkStore.reconnectedNotification}
 		<div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-emerald-500/95 text-white px-4 py-1.5 rounded-full text-xs font-black shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-none select-none border border-emerald-400">

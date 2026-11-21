@@ -2,6 +2,36 @@ import QRCode from 'qrcode';
 import type { SessionData, KioskSettings, FrameLayout } from '$lib/types';
 import { saveSessionToDB } from '$lib/services/db';
 
+function getAdminPinFromStorage(explicitPin?: string): string {
+	if (explicitPin && explicitPin.trim()) return explicitPin.trim();
+	let adminPin = '0509';
+	if (typeof localStorage !== 'undefined') {
+		try {
+			const raw = localStorage.getItem('chekiyuume_kiosk_settings');
+			if (raw) {
+				const parsed = JSON.parse(raw);
+				if (parsed?.adminPin) adminPin = String(parsed.adminPin).trim();
+			}
+		} catch (_) {}
+	}
+	return adminPin || '0509';
+}
+
+function sanitizeGuestName(guestName?: string): string {
+	return guestName
+		? guestName
+				.trim()
+				.toLowerCase()
+				.replace(/[^a-z0-9_-]/g, '_')
+				.replace(/_+/g, '_')
+				.slice(0, 30) || 'guest'
+		: 'guest';
+}
+
+function normalizeFrameName(name: string): string {
+	return (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 export async function generateQrCodeDataUrl(text: string): Promise<string> {
 	try {
 		let cleanText = text;
@@ -80,7 +110,7 @@ export async function uploadToCloudinary(
 		formData.append('file', file);
 	}
 
-	let cleanFolder = options.folder ? options.folder.replace(/^\/+|\/+$/g, '') : undefined;
+	const cleanFolder = options.folder ? options.folder.replace(/^\/+|\/+$/g, '') : undefined;
 	let cleanPublicId = options.publicId;
 	if (cleanFolder && cleanPublicId && cleanPublicId.startsWith(cleanFolder)) {
 		cleanPublicId = cleanPublicId.slice(cleanFolder.length).replace(/^\/+/, '');
@@ -114,7 +144,7 @@ export async function uploadToCloudinary(
 					if (cleanPublicId) formData.append('public_id', cleanPublicId);
 					if (options.tags && options.tags.length > 0) formData.append('tags', options.tags.join(','));
 					isSigned = true;
-					console.log('[CloudUpload] ✓ Signed signature received from Cloudflare Pages Function (overwrite enabled)');
+					console.log('[CloudUpload] ✓ Signed signature received from Cloudflare Pages Function');
 				} else {
 					console.warn('[CloudUpload] /api/sign-cloudinary was not successful:', signData?.error);
 				}
@@ -176,8 +206,69 @@ export async function uploadToCloudinary(
 	return data.secure_url;
 }
 
+export interface CloudSessionSummary {
+	sessionId: string;
+	guestName?: string;
+	mode: string;
+	layoutId: string;
+	photoUrl?: string;
+	videoUrl?: string;
+	shareUrl?: string;
+	manifestUrl?: string;
+	photosCount?: number;
+	printCount?: number;
+	createdAt: number;
+}
+
 /**
- * Uploads session assets (Photostrip & Videostrip) to structured Cloudinary folders
+ * Saves one or multiple session metadata entries atomically to Cloudflare D1 via /api/sessions.
+ */
+export async function saveSessionToCloudDB(
+	sessionOrList: CloudSessionSummary | CloudSessionSummary[]
+): Promise<{ success: boolean; d1Unavailable?: boolean; count?: number; error?: string }> {
+	try {
+		const payload = Array.isArray(sessionOrList)
+			? { sessions: sessionOrList }
+			: sessionOrList;
+
+		const res = await fetch('/api/sessions', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload)
+		});
+
+		if (res.status === 503 || res.status === 404) {
+			const body = await res.json().catch(() => ({}));
+			return {
+				success: false,
+				d1Unavailable: true,
+				error: body?.error || `HTTP ${res.status}`
+			};
+		}
+
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok || !data?.success) {
+			return {
+				success: false,
+				error: data?.error || `HTTP ${res.status}`
+			};
+		}
+
+		return {
+			success: true,
+			count: data.count ?? (Array.isArray(sessionOrList) ? sessionOrList.length : 1)
+		};
+	} catch (err: any) {
+		return {
+			success: false,
+			d1Unavailable: true,
+			error: err?.message || String(err)
+		};
+	}
+}
+
+/**
+ * Uploads photostrip & videostrip in parallel to Cloudinary and stores session metadata in Cloudflare D1.
  */
 export async function uploadSessionToCloud(
 	session: SessionData,
@@ -185,7 +276,6 @@ export async function uploadSessionToCloud(
 ): Promise<{ photoUrl: string | null; videoUrl: string | null; shareUrl: string }> {
 	const fallbackShareUrl = `${window.location.origin}/share/${session.sessionId}`;
 
-	// Handle Cloudinary Provider
 	if (settings.cloudProvider === 'cloudinary') {
 		const cloudName = settings.cloudinaryCloudName?.trim();
 		const uploadPreset = settings.cloudinaryUploadPreset?.trim();
@@ -199,69 +289,63 @@ export async function uploadSessionToCloud(
 			};
 		}
 
-		let photoUrl: string | null = null;
-		let videoUrl: string | null = null;
-
-		// Format structured folder name: chekiyuume/sessions/{guestName}_{sessionId}
-		const sanitizedGuestName = session.guestName
-			? session.guestName
-					.trim()
-					.toLowerCase()
-					.replace(/[^a-z0-9_-]/g, '_')
-					.replace(/_+/g, '_')
-					.slice(0, 30)
-			: 'guest';
-		const sessionFolder = `chekiyuume/sessions/${sanitizedGuestName}_${session.sessionId}`;
+		const sanitizedGuest = sanitizeGuestName(session.guestName);
+		const sessionFolder = `chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}`;
 
 		try {
-			// 1. Upload Photostrip
-			if (session.photostripBlob) {
-				photoUrl = await uploadToCloudinary(
-					session.photostripBlob,
-					'image',
-					cloudName,
-					uploadPreset,
-					{
+			// 1. Parallel upload: Photostrip (image) + Videostrip (video) simultaneously
+			const photoUploadPromise = (async (): Promise<string | null> => {
+				if (session.photostripBlob) {
+					return await uploadToCloudinary(
+						session.photostripBlob,
+						'image',
+						cloudName,
+						uploadPreset,
+						{
+							folder: sessionFolder,
+							publicId: `photostrip_${session.sessionId}`,
+							fileName: `photostrip_${session.sessionId}.png`,
+							tags: ['chekiyuume', 'session', 'photostrip', session.sessionId, sanitizedGuest]
+						}
+					);
+				}
+				if (session.photostripDataUrl) {
+					const res = await fetch(session.photostripDataUrl);
+					const blob = await res.blob();
+					return await uploadToCloudinary(blob, 'image', cloudName, uploadPreset, {
 						folder: sessionFolder,
 						publicId: `photostrip_${session.sessionId}`,
 						fileName: `photostrip_${session.sessionId}.png`,
-						tags: ['chekiyuume', 'session', 'photostrip', session.sessionId, sanitizedGuestName]
-					}
-				);
-			} else if (session.photostripDataUrl) {
-				const res = await fetch(session.photostripDataUrl);
-				const blob = await res.blob();
-				photoUrl = await uploadToCloudinary(
-					blob,
-					'image',
-					cloudName,
-					uploadPreset,
-					{
-						folder: sessionFolder,
-						publicId: `photostrip_${session.sessionId}`,
-						fileName: `photostrip_${session.sessionId}.png`,
-						tags: ['chekiyuume', 'session', 'photostrip', session.sessionId, sanitizedGuestName]
-					}
-				);
-			}
+						tags: ['chekiyuume', 'session', 'photostrip', session.sessionId, sanitizedGuest]
+					});
+				}
+				return null;
+			})();
 
-			// 2. Upload Videostrip (if available)
-			if (session.videostripBlob) {
-				videoUrl = await uploadToCloudinary(
-					session.videostripBlob,
-					'video',
-					cloudName,
-					uploadPreset,
-					{
-						folder: sessionFolder,
-						publicId: `videostrip_${session.sessionId}`,
-						fileName: `videostrip_${session.sessionId}.mp4`,
-						tags: ['chekiyuume', 'session', 'videostrip', session.sessionId, sanitizedGuestName]
-					}
-				);
-			}
+			const videoUploadPromise = (async (): Promise<string | null> => {
+				if (!session.videostripBlob) return null;
+				try {
+					return await uploadToCloudinary(
+						session.videostripBlob,
+						'video',
+						cloudName,
+						uploadPreset,
+						{
+							folder: sessionFolder,
+							publicId: `videostrip_${session.sessionId}`,
+							fileName: `videostrip_${session.sessionId}.mp4`,
+							tags: ['chekiyuume', 'session', 'videostrip', session.sessionId, sanitizedGuest]
+						}
+					);
+				} catch (vidErr) {
+					console.warn('[Cloudinary] Videostrip upload failed (continuing with photostrip):', vidErr);
+					return null;
+				}
+			})();
 
-			// Construct Share Page URL with query params
+			const [photoUrl, videoUrl] = await Promise.all([photoUploadPromise, videoUploadPromise]);
+
+			// Construct Share Page URL
 			const basePublicUrl = settings.cloudPublicBaseUrl?.trim() || window.location.origin;
 			const shareParams = new URLSearchParams();
 			if (photoUrl) shareParams.set('p', photoUrl);
@@ -271,62 +355,29 @@ export async function uploadSessionToCloud(
 			const queryString = shareParams.toString();
 			const shareUrl = `${basePublicUrl}/share/${session.sessionId}${queryString ? `?${queryString}` : ''}`;
 
-			// 3. Upload per-session manifest.json into chekiyuume/sessions/{guestName}_{sessionId}/manifest.json
-			let manifestUrl: string | undefined = undefined;
-			try {
-				const sessionManifestData = {
-					sessionId: session.sessionId,
-					guestName: session.guestName || '',
-					createdAt: session.createdAt || Date.now(),
-					mode: session.mode,
-					layoutId: session.layoutId,
-					photoUrl: photoUrl || undefined,
-					videoUrl: videoUrl || undefined,
-					shareUrl,
-					photosCount: session.photos?.length || session.photosCount || 4,
-					printCount: session.printCount || 0
-				};
-				const sessionManifestBlob = new Blob([JSON.stringify(sessionManifestData, null, 2)], {
-					type: 'application/json'
-				});
-				manifestUrl = await uploadToCloudinary(
-					sessionManifestBlob,
-					'raw',
-					cloudName,
-					uploadPreset,
-					{
-						folder: sessionFolder,
-						publicId: 'manifest.json',
-						fileName: 'manifest.json',
-						overwrite: true,
-						tags: ['chekiyuume', 'session_manifest', session.sessionId, sanitizedGuestName]
-					}
-				);
-			} catch (mErr) {
-				console.warn('[Cloudinary] Per-session manifest upload warning:', mErr);
-			}
+			const summary: CloudSessionSummary = {
+				sessionId: session.sessionId,
+				guestName: session.guestName,
+				mode: session.mode,
+				layoutId: session.layoutId,
+				photoUrl: photoUrl || undefined,
+				videoUrl: videoUrl || undefined,
+				shareUrl,
+				photosCount: session.photos?.length || session.photosCount || 4,
+				printCount: session.printCount || 0,
+				createdAt: session.createdAt || Date.now()
+			};
 
-			// Automatically append session into central Cloudinary sessions_manifest.json
-			try {
-				await recordSessionToCloudinaryManifest(
-					{
-						sessionId: session.sessionId,
-						guestName: session.guestName,
-						mode: session.mode,
-						layoutId: session.layoutId,
-						photoUrl: photoUrl || undefined,
-						videoUrl: videoUrl || undefined,
-						shareUrl,
-						manifestUrl,
-						photosCount: session.photos?.length || session.photosCount || 4,
-						printCount: session.printCount || 0,
-						createdAt: session.createdAt || Date.now()
-					},
-					cloudName,
-					uploadPreset
-				);
-			} catch (e) {
-				console.warn('[Cloudinary] Session manifest sync warning:', e);
+			// 2. Persist metadata atomically to Cloudflare D1
+			const dbResult = await saveSessionToCloudDB(summary);
+			if (dbResult.success) {
+				console.log(`[CloudDB] ✓ Session "${session.sessionId}" saved to Cloudflare D1.`);
+			} else if (dbResult.d1Unavailable) {
+				// Fallback to legacy Cloudinary manifest only when D1 binding is unavailable (e.g., local vite dev)
+				console.warn('[CloudDB] D1 unavailable, falling back to legacy Cloudinary manifest:', dbResult.error);
+				await recordSessionToCloudinaryManifest(summary, cloudName, uploadPreset).catch(() => {});
+			} else {
+				console.warn('[CloudDB] Failed to save session to D1:', dbResult.error);
 			}
 
 			return {
@@ -337,15 +388,14 @@ export async function uploadSessionToCloud(
 		} catch (err) {
 			console.error('[Cloudinary] Upload failed, using fallback:', err);
 			return {
-				photoUrl,
-				videoUrl,
+				photoUrl: null,
+				videoUrl: null,
 				shareUrl: fallbackShareUrl
 			};
 		}
 	}
 
 	if (settings.cloudProvider === 'none' || !settings.cloudEndpoint) {
-		// Offline / Local-only mode
 		return {
 			photoUrl: null,
 			videoUrl: null,
@@ -354,7 +404,6 @@ export async function uploadSessionToCloud(
 	}
 
 	try {
-		// S3 / R2 Bucket structure
 		const basePublicUrl = settings.cloudPublicBaseUrl || window.location.origin;
 		const shareUrl = `${basePublicUrl}/share/${session.sessionId}`;
 
@@ -382,13 +431,7 @@ export async function uploadCustomFrameOverlayToCloudinary(
 	cloudName: string,
 	uploadPreset: string
 ): Promise<string> {
-	const sanitizedName =
-		frameName
-			.trim()
-			.toLowerCase()
-			.replace(/[^a-z0-9_-]/g, '_')
-			.replace(/_+/g, '_')
-			.slice(0, 30) || 'frame';
+	const sanitizedName = sanitizeGuestName(frameName) || 'frame';
 	const uniqueId = `frame_${sanitizedName}_${Date.now()}`;
 
 	return await uploadToCloudinary(file, 'image', cloudName, uploadPreset, {
@@ -399,58 +442,96 @@ export async function uploadCustomFrameOverlayToCloudinary(
 	});
 }
 
+function deduplicateCustomFrames(frames: FrameLayout[]): FrameLayout[] {
+	const customOnly = frames.filter((f) => f.id.startsWith('custom-'));
+	const seen = new Set<string>();
+	const dedupedCustom: FrameLayout[] = [];
+	for (const f of customOnly) {
+		const norm = normalizeFrameName(f.name);
+		if (!seen.has(norm)) {
+			seen.add(norm);
+			dedupedCustom.push(f);
+		}
+	}
+	return dedupedCustom;
+}
+
 /**
- * Backs up all custom frame templates as a JSON manifest to Cloudinary
+ * Saves custom frame templates to Cloudflare D1 (with legacy Cloudinary manifest fallback if D1 unavailable).
  */
-export async function backupCustomFramesToCloudinary(
+export async function backupCustomFramesToCloudDB(
 	frames: FrameLayout[],
-	cloudName: string,
-	uploadPreset: string
+	adminPin?: string,
+	fallbackCloudinary?: { cloudName?: string; uploadPreset?: string }
 ): Promise<{ success: boolean; url?: string; count: number; error?: string }> {
 	try {
-		const customOnly = frames.filter((f) => f.id.startsWith('custom-'));
+		const dedupedCustom = deduplicateCustomFrames(frames);
+		const pin = getAdminPinFromStorage(adminPin);
 
-		// Anti-Duplication: Ensure manifest never contains duplicate frame names
-		const seen = new Set<string>();
-		const dedupedCustom: FrameLayout[] = [];
-		for (const f of customOnly) {
-			const norm = f.name.trim().toLowerCase().replace(/\s+/g, ' ');
-			if (!seen.has(norm)) {
-				seen.add(norm);
-				dedupedCustom.push(f);
+		const res = await fetch('/api/frames', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'x-admin-pin': pin
+			},
+			body: JSON.stringify({
+				frames: dedupedCustom,
+				replaceAll: true
+			})
+		});
+
+		if (res.ok) {
+			const data = await res.json();
+			if (data?.success) {
+				return {
+					success: true,
+					count: dedupedCustom.length
+				};
 			}
 		}
 
-		const manifestData = {
-			version: '1.0',
-			updatedAt: Date.now(),
-			totalCustomFrames: dedupedCustom.length,
-			frames: dedupedCustom
-		};
-
-		const blob = new Blob([JSON.stringify(manifestData, null, 2)], {
-			type: 'application/json'
-		});
-
-		const manifestUrl = await uploadToCloudinary(blob, 'raw', cloudName, uploadPreset, {
-			folder: 'chekiyuume',
-			publicId: 'frames_manifest.json',
-			fileName: 'frames_manifest.json',
-			overwrite: true,
-			tags: ['chekiyuume', 'frames_manifest', 'backup']
-		});
-
-		if (typeof localStorage !== 'undefined' && manifestUrl) {
-			localStorage.setItem('cheki_last_frames_manifest_url', manifestUrl);
+		// Legacy Cloudinary fallback when D1 is unavailable (404/503 in local vite dev)
+		if (
+			(res.status === 503 || res.status === 404) &&
+			fallbackCloudinary?.cloudName?.trim() &&
+			fallbackCloudinary?.uploadPreset?.trim()
+		) {
+			const manifestData = {
+				version: '1.0',
+				updatedAt: Date.now(),
+				totalCustomFrames: dedupedCustom.length,
+				frames: dedupedCustom
+			};
+			const blob = new Blob([JSON.stringify(manifestData, null, 2)], {
+				type: 'application/json'
+			});
+			const manifestUrl = await uploadToCloudinary(
+				blob,
+				'raw',
+				fallbackCloudinary.cloudName.trim(),
+				fallbackCloudinary.uploadPreset.trim(),
+				{
+					folder: 'chekiyuume',
+					publicId: 'frames_manifest.json',
+					fileName: 'frames_manifest.json',
+					overwrite: true,
+					tags: ['chekiyuume', 'frames_manifest', 'backup']
+				}
+			);
+			if (typeof localStorage !== 'undefined' && manifestUrl) {
+				localStorage.setItem('cheki_last_frames_manifest_url', manifestUrl);
+			}
+			return {
+				success: true,
+				url: manifestUrl,
+				count: dedupedCustom.length
+			};
 		}
 
-		return {
-			success: true,
-			url: manifestUrl,
-			count: customOnly.length
-		};
+		const errData = await res.json().catch(() => ({}));
+		throw new Error(errData?.error || `Gagal menyimpan custom frames (HTTP ${res.status})`);
 	} catch (err: any) {
-		console.error('[Frames] Failed to backup frames manifest to Cloudinary:', err);
+		console.error('[Frames] Failed to backup custom frames:', err);
 		return {
 			success: false,
 			count: 0,
@@ -460,81 +541,118 @@ export async function backupCustomFramesToCloudinary(
 }
 
 /**
- * Retrieves custom frame templates manifest from Cloudinary
+ * Backward-compatible alias for saving custom frames (D1-first with optional Cloudinary fallback).
  */
-export async function retrieveCustomFramesFromCloudinary(
-	cloudName: string
+export async function backupCustomFramesToCloudinary(
+	frames: FrameLayout[],
+	cloudName: string,
+	uploadPreset: string,
+	adminPin?: string
+): Promise<{ success: boolean; url?: string; count: number; error?: string }> {
+	return await backupCustomFramesToCloudDB(frames, adminPin, { cloudName, uploadPreset });
+}
+
+/**
+ * Deletes a single custom frame or clears all custom frames in Cloudflare D1.
+ */
+export async function deleteCustomFrameFromCloudDB(
+	frameId: string,
+	adminPin?: string
+): Promise<boolean> {
+	try {
+		const pin = getAdminPinFromStorage(adminPin);
+		const res = await fetch(`/api/frames?id=${encodeURIComponent(frameId)}`, {
+			method: 'DELETE',
+			headers: { 'x-admin-pin': pin }
+		});
+		return res.ok;
+	} catch {
+		return false;
+	}
+}
+
+export async function clearCustomFramesInCloudDB(adminPin?: string): Promise<boolean> {
+	try {
+		const pin = getAdminPinFromStorage(adminPin);
+		const res = await fetch('/api/frames?all=true', {
+			method: 'DELETE',
+			headers: { 'x-admin-pin': pin }
+		});
+		return res.ok;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Retrieves custom frame templates from Cloudflare D1 (with legacy Cloudinary manifest fallback).
+ */
+export async function retrieveCustomFramesFromCloudDB(
+	cloudName?: string
 ): Promise<{ success: boolean; frames: FrameLayout[]; count: number; error?: string }> {
 	try {
-		const cleanCloud = cloudName.trim();
-		if (!cleanCloud) {
-			throw new Error('Cloudinary Cloud Name belum diisi.');
-		}
-
-		console.log(`[FramesRetrieve] Fetching custom frames manifest from Cloudinary: "${cleanCloud}"...`);
-
-		const candidateUrls: string[] = [
-			`/api/manifest?type=frames&_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/frames_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/frames_manifest.json?_t=${Date.now()}`
-		];
-
-		if (typeof localStorage !== 'undefined') {
-			const cachedUrl = localStorage.getItem('cheki_last_frames_manifest_url');
-			if (cachedUrl) {
-				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
-				const separator = unversionedCached.includes('?') ? '&' : '?';
-				candidateUrls.push(`${unversionedCached}${separator}_t=${Date.now()}`);
-			}
-		}
-
-		let data: any = null;
-		let lastStatus = 0;
-
-		for (const url of candidateUrls) {
-			try {
-				console.log(`[FramesRetrieve] Checking URL: ${url}`);
-				const res = await fetch(url, {
-					cache: 'no-store',
-					headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache', 'Accept': 'application/json' }
-				});
-				lastStatus = res.status;
-				console.log(`[FramesRetrieve] -> HTTP ${res.status}`);
-				if (res.ok) {
-					const json = await res.json();
-					if (json && Array.isArray(json.frames)) {
-						data = json;
-						console.log(`[FramesRetrieve] ✓ Frames manifest parsed successfully! Total frames: ${data.frames.length}`);
-						if (typeof localStorage !== 'undefined') {
-							localStorage.setItem('cheki_last_frames_manifest_url', url.split('?')[0]);
-						}
-						break;
-					}
+		try {
+			const res = await fetch(`/api/frames?_t=${Date.now()}`, {
+				cache: 'no-store',
+				headers: { 'Cache-Control': 'no-cache', Accept: 'application/json' }
+			});
+			if (res.ok) {
+				const json = await res.json();
+				if (json && Array.isArray(json.frames)) {
+					return {
+						success: true,
+						frames: json.frames,
+						count: json.frames.length
+					};
 				}
-			} catch (fetchErr) {
-				console.warn(`[FramesRetrieve] Fetch error at ${url}:`, fetchErr);
 			}
+		} catch (apiErr) {
+			console.warn('[FramesRetrieve] /api/frames fetch warning:', apiErr);
 		}
 
-		if (!data) {
-			console.warn(`[FramesRetrieve] Manifest frames belum ditemukan di Cloudinary (HTTP ${lastStatus || 404})`);
+		// Legacy Cloudinary fallback if /api/frames is unreachable (e.g., pure static dev server)
+		const cleanCloud = (cloudName || '').trim();
+		if (!cleanCloud) {
 			return {
 				success: false,
 				frames: [],
 				count: 0,
-				error: 'Belum ada manifest frame di Cloudinary (chekiyuume/frames_manifest.json). Lakukan "Backup ke Cloud" terlebih dahulu di tab Frame Designer.'
+				error: 'Belum dapat mengakses database frame (/api/frames).'
 			};
 		}
 
+		const candidateUrls: string[] = [
+			`/api/manifest?type=frames&_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/frames_manifest.json?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/frames_manifest.json?_t=${Date.now()}`
+		];
+
+		for (const url of candidateUrls) {
+			try {
+				const res = await fetch(url, {
+					cache: 'no-store',
+					headers: { 'Cache-Control': 'no-cache', Accept: 'application/json' }
+				});
+				if (res.ok) {
+					const json = await res.json();
+					if (json && Array.isArray(json.frames)) {
+						return {
+							success: true,
+							frames: json.frames,
+							count: json.frames.length
+						};
+					}
+				}
+			} catch (_) {}
+		}
+
 		return {
-			success: true,
-			frames: data.frames,
-			count: data.frames.length
+			success: false,
+			frames: [],
+			count: 0,
+			error: 'Belum ada custom frame tersimpan di Cloud / D1.'
 		};
 	} catch (err: any) {
-		console.warn('[FramesRetrieve] ✗ Retrieve frames from Cloudinary failed:', err);
 		return {
 			success: false,
 			frames: [],
@@ -542,6 +660,15 @@ export async function retrieveCustomFramesFromCloudinary(
 			error: err?.message || String(err)
 		};
 	}
+}
+
+/**
+ * Backward-compatible alias for retrieving custom frames (D1-first with legacy fallback).
+ */
+export async function retrieveCustomFramesFromCloudinary(
+	cloudName?: string
+): Promise<{ success: boolean; frames: FrameLayout[]; count: number; error?: string }> {
+	return await retrieveCustomFramesFromCloudDB(cloudName);
 }
 
 /**
@@ -562,7 +689,6 @@ export async function testCloudinaryConnection(
 			};
 		}
 
-		// 1x1 transparent PNG data URI
 		const testPixelBase64 =
 			'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAA=';
 		const res = await fetch(testPixelBase64);
@@ -588,22 +714,9 @@ export async function testCloudinaryConnection(
 	}
 }
 
-export interface CloudSessionSummary {
-	sessionId: string;
-	guestName?: string;
-	mode: string;
-	layoutId: string;
-	photoUrl?: string;
-	videoUrl?: string;
-	shareUrl?: string;
-	manifestUrl?: string;
-	photosCount?: number;
-	printCount?: number;
-	createdAt: number;
-}
-
 /**
- * Appends / updates a session entry in the central Cloudinary sessions_manifest.json
+ * Legacy fallback: appends a session entry into Cloudinary sessions_manifest.json.
+ * Only invoked if Cloudflare D1 binding is unavailable.
  */
 export async function recordSessionToCloudinaryManifest(
 	session: CloudSessionSummary,
@@ -613,99 +726,52 @@ export async function recordSessionToCloudinaryManifest(
 	try {
 		const cleanCloud = cloudName.trim();
 		const cleanPreset = uploadPreset.trim();
-		if (!cleanCloud || !cleanPreset) {
-			console.warn('[CloudSync] Cannot record session to global manifest: Cloud Name or Upload Preset is empty.');
-			return;
-		}
-
-		console.log(`[CloudSync] Recording session "${session.sessionId}" (${session.guestName || 'Tamu'}) to global manifest on cloud "${cleanCloud}"...`);
+		if (!cleanCloud || !cleanPreset) return;
 
 		let existingSessions: CloudSessionSummary[] = [];
-		let adminPin = '0509';
-		if (typeof localStorage !== 'undefined') {
+		const adminPin = getAdminPinFromStorage();
+		const candidateUrls = [
+			`/api/manifest?type=sessions&pin=${encodeURIComponent(adminPin)}&_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`
+		];
+
+		for (const url of candidateUrls) {
 			try {
-				const raw = localStorage.getItem('chekiyuume_kiosk_settings');
-				if (raw) {
-					const parsed = JSON.parse(raw);
-					if (parsed?.adminPin) adminPin = parsed.adminPin;
+				const res = await fetch(url, {
+					cache: 'no-store',
+					headers: { Accept: 'application/json', 'x-admin-pin': adminPin }
+				});
+				if (res.ok) {
+					const data = await res.json();
+					if (Array.isArray(data?.sessions)) {
+						existingSessions = data.sessions;
+						break;
+					}
 				}
 			} catch (_) {}
 		}
-		const pinQuery = `&pin=${encodeURIComponent(adminPin)}`;
-		const candidateUrls: string[] = [];
-		const manifestEndpoint = `/api/manifest?type=sessions${pinQuery}&_t=${Date.now()}`;
-		if (manifestEndpoint) candidateUrls.push(manifestEndpoint);
 
-		if (typeof localStorage !== 'undefined') {
-			const cachedUrl = localStorage.getItem('cheki_last_sessions_manifest_url');
-			if (cachedUrl) {
-				const separator = cachedUrl.includes('?') ? '&' : '?';
-				candidateUrls.push(`${cachedUrl}${separator}_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`);
-				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
-				const sep = unversionedCached.includes('?') ? '&' : '?';
-				candidateUrls.push(`${unversionedCached}${sep}_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`);
-			}
-		}
-
-		candidateUrls.push(
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`
-		);
-
-		for (let idx = 0; idx < candidateUrls.length; idx++) {
-			const url = candidateUrls[idx];
-			try {
-				console.log(`[CloudSync] [${idx + 1}/${candidateUrls.length}] Checking existing manifest at: ${url}`);
-				const res = await fetch(url, {
-					cache: 'no-store',
-					headers: {
-						'Cache-Control': 'no-cache',
-						'Pragma': 'no-cache',
-						'Accept': 'application/json',
-						'x-admin-pin': adminPin
-					}
-				});
-				console.log(`[CloudSync] -> HTTP ${res.status} ${res.statusText}`);
-				if (res.ok) {
-					const data = await res.json();
-					if (data && Array.isArray(data.sessions)) {
-						existingSessions = data.sessions;
-						console.log(`[CloudSync] ✓ Existing manifest found! Total existing sessions: ${existingSessions.length}`);
-						break;
-					} else if (Array.isArray(data)) {
-						existingSessions = data;
-						console.log(`[CloudSync] ✓ Existing manifest array found! Total sessions: ${existingSessions.length}`);
-						break;
-					}
-				}
-			} catch (fetchErr) {
-				console.warn(`[CloudSync] Manifest check error at ${url}:`, fetchErr);
-			}
-		}
-
-		// Remove duplicate if already present
 		existingSessions = existingSessions.filter((s) => s.sessionId !== session.sessionId);
-		// Add newest at top
 		existingSessions.unshift(session);
-		// Limit to 500 latest sessions
 		if (existingSessions.length > 500) {
 			existingSessions = existingSessions.slice(0, 500);
 		}
 
-		const manifestData = {
-			version: '1.0',
-			updatedAt: Date.now(),
-			totalSessions: existingSessions.length,
-			sessions: existingSessions
-		};
-
-		const blob = new Blob([JSON.stringify(manifestData, null, 2)], {
-			type: 'application/json'
-		});
-
-		console.log(`[CloudSync] Uploading updated global sessions_manifest.json (${existingSessions.length} sessions)...`);
+		const blob = new Blob(
+			[
+				JSON.stringify(
+					{
+						version: '1.0',
+						updatedAt: Date.now(),
+						totalSessions: existingSessions.length,
+						sessions: existingSessions
+					},
+					null,
+					2
+				)
+			],
+			{ type: 'application/json' }
+		);
 
 		const uploadedUrl = await uploadToCloudinary(blob, 'raw', cleanCloud, cleanPreset, {
 			folder: 'chekiyuume',
@@ -718,9 +784,8 @@ export async function recordSessionToCloudinaryManifest(
 		if (typeof localStorage !== 'undefined' && uploadedUrl) {
 			localStorage.setItem('cheki_last_sessions_manifest_url', uploadedUrl);
 		}
-		console.log('[CloudSync] ✓ Global sessions manifest updated successfully! URL:', uploadedUrl);
 	} catch (err) {
-		console.error('[CloudSync] ✗ Failed to update global sessions manifest:', err);
+		console.error('[CloudSync] Legacy manifest fallback error:', err);
 	}
 }
 
@@ -734,8 +799,8 @@ export interface BackupSessionsResult {
 }
 
 /**
- * Uploads/syncs local sessions to Cloudinary, uploads per-session manifest.json,
- * automatically skips sessions already in the cloud, and updates sessions_manifest.json.
+ * Uploads local sessions' media (photostrip & videostrip in parallel) to Cloudinary,
+ * skips sessions already uploaded, and batch-saves metadata to Cloudflare D1.
  */
 export async function backupAllSessionsToCloudinary(
 	sessions: SessionData[],
@@ -752,21 +817,24 @@ export async function backupAllSessionsToCloudinary(
 		}
 
 		if (sessions.length === 0) {
-			return { success: false, count: 0, skippedCount: 0, total: 0, error: 'Tidak ada sesi untuk dicadangkan.' };
+			return {
+				success: false,
+				count: 0,
+				skippedCount: 0,
+				total: 0,
+				error: 'Tidak ada sesi untuk dicadangkan.'
+			};
 		}
 
-		console.log(`[CloudBackup] Starting backup for ${sessions.length} sessions to cloud "${cleanCloud}"...`);
-
-		// 1. Fetch existing remote manifest if any
+		// 1. Fetch existing remote sessions from D1 (or legacy manifest fallback)
 		let remoteSessions: CloudSessionSummary[] = [];
 		try {
 			const res = await retrieveSessionsFromCloudinary(cleanCloud);
 			if (res.success && res.sessions) {
 				remoteSessions = res.sessions;
-				console.log(`[CloudBackup] Found ${remoteSessions.length} existing sessions in remote manifest.`);
 			}
 		} catch (rErr) {
-			console.warn('[CloudBackup] Existing manifest retrieval warning:', rErr);
+			console.warn('[CloudBackup] Existing sessions retrieval warning:', rErr);
 		}
 
 		const remoteMap = new Map<string, CloudSessionSummary>();
@@ -775,6 +843,7 @@ export async function backupAllSessionsToCloudinary(
 		const skipExisting = options.skipAlreadyUploaded !== false;
 		let uploadedCount = 0;
 		let skippedCount = 0;
+		const summariesToSyncToD1: CloudSessionSummary[] = [];
 
 		// 2. Process sessions
 		for (let i = 0; i < sessions.length; i++) {
@@ -792,15 +861,11 @@ export async function backupAllSessionsToCloudinary(
 				if (!session.cloudShareUrl && existingRemote.shareUrl) shareUrl = existingRemote.shareUrl;
 			}
 
-			// If already uploaded and skip is requested, skip uploading media files
-			const isAlreadyInCloud = Boolean(
-				session.cloudUploadStatus === 'success' && photoUrl
-			);
+			const isAlreadyInCloud = Boolean(session.cloudUploadStatus === 'success' && photoUrl);
 
 			if (skipExisting && isAlreadyInCloud) {
 				skippedCount++;
-				console.log(`[CloudBackup] [${i + 1}/${sessions.length}] Skipping already uploaded session: ${session.sessionId} (${guestLabel})`);
-				remoteMap.set(session.sessionId, {
+				const summary: CloudSessionSummary = {
 					sessionId: session.sessionId,
 					guestName: session.guestName,
 					mode: session.mode,
@@ -812,115 +877,71 @@ export async function backupAllSessionsToCloudinary(
 					photosCount: session.photos?.length || session.photosCount || existingRemote?.photosCount || 4,
 					printCount: session.printCount || existingRemote?.printCount || 0,
 					createdAt: session.createdAt || Date.now()
-				});
+				};
+				remoteMap.set(session.sessionId, summary);
+				if (!existingRemote) {
+					summariesToSyncToD1.push(summary);
+				}
 				if (onProgress) onProgress(i + 1, sessions.length, `(Dilewati) ${guestLabel}`);
 				continue;
 			}
 
-			console.log(`[CloudBackup] [${i + 1}/${sessions.length}] Uploading session: ${session.sessionId} (${guestLabel})...`);
 			if (onProgress) onProgress(i + 1, sessions.length, `Mengunggah ${guestLabel}...`);
 
-			const sanitizedGuestName = session.guestName
-				? session.guestName
-						.trim()
-						.toLowerCase()
-						.replace(/[^a-z0-9_-]/g, '_')
-						.replace(/_+/g, '_')
-						.slice(0, 30)
-				: 'guest';
-			const sessionFolder = `chekiyuume/sessions/${sanitizedGuestName}_${session.sessionId}`;
+			const sanitizedGuest = sanitizeGuestName(session.guestName);
+			const sessionFolder = `chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}`;
 
-			// Upload photostrip if not already uploaded
-			if (!photoUrl && (session.photostripBlob || session.photostripDataUrl)) {
+			// Parallel upload for missing photostrip and videostrip
+			const photoPromise = (async (): Promise<string | null> => {
+				if (photoUrl) return photoUrl;
+				if (!session.photostripBlob && !session.photostripDataUrl) return null;
 				try {
 					let blobToUpload: Blob | null = session.photostripBlob || null;
 					if (!blobToUpload && session.photostripDataUrl) {
 						const res = await fetch(session.photostripDataUrl);
 						blobToUpload = await res.blob();
 					}
-
-					if (blobToUpload) {
-						photoUrl = await uploadToCloudinary(
-							blobToUpload,
-							'image',
-							cleanCloud,
-							cleanPreset,
-							{
-								folder: sessionFolder,
-								publicId: `photostrip_${session.sessionId}`,
-								fileName: `photostrip_${session.sessionId}.png`,
-								tags: ['chekiyuume', 'session', 'photostrip', session.sessionId, sanitizedGuestName]
-							}
-						);
-					}
-				} catch (uploadErr) {
-					console.warn(`[CloudBackup] Failed to upload photostrip for session ${session.sessionId}:`, uploadErr);
-				}
-			}
-
-			// Upload videostrip if available and not uploaded
-			if (!videoUrl && session.videostripBlob) {
-				try {
-					videoUrl = await uploadToCloudinary(
-						session.videostripBlob,
-						'video',
-						cleanCloud,
-						cleanPreset,
-						{
-							folder: sessionFolder,
-							publicId: `videostrip_${session.sessionId}`,
-							fileName: `videostrip_${session.sessionId}.mp4`,
-							tags: ['chekiyuume', 'session', 'videostrip', session.sessionId, sanitizedGuestName]
-						}
-					);
-				} catch (vidErr) {
-					console.warn(`[CloudBackup] Failed to upload videostrip for session ${session.sessionId}:`, vidErr);
-				}
-			}
-
-			// Upload per-session manifest.json into the session folder
-			let sessionManifestUrl: string | undefined = undefined;
-			try {
-				const sessionManifestData = {
-					sessionId: session.sessionId,
-					guestName: session.guestName || '',
-					createdAt: session.createdAt || Date.now(),
-					mode: session.mode,
-					layoutId: session.layoutId,
-					photoUrl: photoUrl || undefined,
-					videoUrl: videoUrl || undefined,
-					shareUrl,
-					photosCount: session.photos?.length || session.photosCount || 4,
-					printCount: session.printCount || 0
-				};
-				const manifestBlob = new Blob([JSON.stringify(sessionManifestData, null, 2)], {
-					type: 'application/json'
-				});
-				sessionManifestUrl = await uploadToCloudinary(
-					manifestBlob,
-					'raw',
-					cleanCloud,
-					cleanPreset,
-					{
+					if (!blobToUpload) return null;
+					return await uploadToCloudinary(blobToUpload, 'image', cleanCloud, cleanPreset, {
 						folder: sessionFolder,
-						publicId: 'manifest.json',
-						fileName: 'manifest.json',
-						overwrite: true,
-						tags: ['chekiyuume', 'session_manifest', session.sessionId, sanitizedGuestName]
-					}
-				);
-			} catch (mErr) {
-				console.warn(`[CloudBackup] Failed to upload manifest for session ${session.sessionId}:`, mErr);
-			}
+						publicId: `photostrip_${session.sessionId}`,
+						fileName: `photostrip_${session.sessionId}.png`,
+						tags: ['chekiyuume', 'session', 'photostrip', session.sessionId, sanitizedGuest]
+					});
+				} catch (uploadErr) {
+					console.warn(`[CloudBackup] Failed to upload photostrip for ${session.sessionId}:`, uploadErr);
+					return null;
+				}
+			})();
 
-			// Update session in local IndexedDB so it marks cloud status immediately
+			const videoPromise = (async (): Promise<string | null> => {
+				if (videoUrl) return videoUrl;
+				if (!session.videostripBlob) return null;
+				try {
+					return await uploadToCloudinary(session.videostripBlob, 'video', cleanCloud, cleanPreset, {
+						folder: sessionFolder,
+						publicId: `videostrip_${session.sessionId}`,
+						fileName: `videostrip_${session.sessionId}.mp4`,
+						tags: ['chekiyuume', 'session', 'videostrip', session.sessionId, sanitizedGuest]
+					});
+				} catch (vidErr) {
+					console.warn(`[CloudBackup] Failed to upload videostrip for ${session.sessionId}:`, vidErr);
+					return null;
+				}
+			})();
+
+			const [uploadedPhotoUrl, uploadedVideoUrl] = await Promise.all([photoPromise, videoPromise]);
+			photoUrl = uploadedPhotoUrl;
+			videoUrl = uploadedVideoUrl;
+
+			// Update local IndexedDB
 			session.cloudPhotoUrl = photoUrl || session.cloudPhotoUrl || null;
 			session.cloudVideoUrl = videoUrl || session.cloudVideoUrl || null;
 			session.cloudShareUrl = shareUrl || session.cloudShareUrl || null;
 			session.cloudUploadStatus = photoUrl ? 'success' : session.cloudUploadStatus;
 			await saveSessionToDB(session);
 
-			remoteMap.set(session.sessionId, {
+			const summary: CloudSessionSummary = {
 				sessionId: session.sessionId,
 				guestName: session.guestName,
 				mode: session.mode,
@@ -928,51 +949,54 @@ export async function backupAllSessionsToCloudinary(
 				photoUrl: photoUrl || undefined,
 				videoUrl: videoUrl || undefined,
 				shareUrl,
-				manifestUrl: sessionManifestUrl,
 				photosCount: session.photos?.length || session.photosCount || 4,
 				printCount: session.printCount || 0,
 				createdAt: session.createdAt || Date.now()
-			});
-
+			};
+			remoteMap.set(session.sessionId, summary);
+			summariesToSyncToD1.push(summary);
 			uploadedCount++;
 		}
 
-		// Convert remoteMap back to sorted array (newest first)
 		const mergedSessions = Array.from(remoteMap.values()).sort((a, b) => b.createdAt - a.createdAt);
 
-		const manifestData = {
-			version: '1.0',
-			updatedAt: Date.now(),
-			totalSessions: mergedSessions.length,
-			sessions: mergedSessions.slice(0, 500)
-		};
-
-		const blob = new Blob([JSON.stringify(manifestData, null, 2)], {
-			type: 'application/json'
-		});
-
-		console.log(`[CloudBackup] Uploading final global sessions_manifest.json with ${mergedSessions.length} total sessions...`);
-
-		const globalManifestUrl = await uploadToCloudinary(blob, 'raw', cleanCloud, cleanPreset, {
-			folder: 'chekiyuume',
-			publicId: 'sessions_manifest.json',
-			fileName: 'sessions_manifest.json',
-			overwrite: true,
-			tags: ['chekiyuume', 'sessions_manifest', 'database']
-		});
-
-		if (typeof localStorage !== 'undefined' && globalManifestUrl) {
-			localStorage.setItem('cheki_last_sessions_manifest_url', globalManifestUrl);
+		// 3. Batch upsert metadata to Cloudflare D1
+		let fallbackManifestUrl: string | undefined = undefined;
+		if (summariesToSyncToD1.length > 0) {
+			const dbResult = await saveSessionToCloudDB(summariesToSyncToD1);
+			if (dbResult.d1Unavailable) {
+				// Fallback to legacy global manifest only if D1 binding is unavailable
+				const blob = new Blob(
+					[
+						JSON.stringify(
+							{
+								version: '1.0',
+								updatedAt: Date.now(),
+								totalSessions: mergedSessions.length,
+								sessions: mergedSessions.slice(0, 500)
+							},
+							null,
+							2
+						)
+					],
+					{ type: 'application/json' }
+				);
+				fallbackManifestUrl = await uploadToCloudinary(blob, 'raw', cleanCloud, cleanPreset, {
+					folder: 'chekiyuume',
+					publicId: 'sessions_manifest.json',
+					fileName: 'sessions_manifest.json',
+					overwrite: true,
+					tags: ['chekiyuume', 'sessions_manifest', 'database']
+				});
+			}
 		}
-
-		console.log('[CloudBackup] ✓ Backup complete! Uploaded:', uploadedCount, 'Skipped:', skippedCount, 'Manifest:', globalManifestUrl);
 
 		return {
 			success: true,
 			count: uploadedCount,
 			skippedCount,
 			total: mergedSessions.length,
-			manifestUrl: globalManifestUrl
+			manifestUrl: fallbackManifestUrl
 		};
 	} catch (err: any) {
 		console.error('[CloudBackup] ✗ backupAllSessionsToCloudinary failed:', err);
@@ -987,121 +1011,103 @@ export async function backupAllSessionsToCloudinary(
 }
 
 /**
- * Retrieves all sessions from Cloudinary sessions_manifest.json with multiple URL fallbacks
+ * Retrieves all sessions from Cloudflare D1 (with legacy Cloudinary manifest fallback if D1 unavailable).
  */
-export async function retrieveSessionsFromCloudinary(
-	cloudName: string,
-	pin?: string
+export async function retrieveSessionsFromCloudDB(
+	pin?: string,
+	fallbackCloudName?: string
 ): Promise<{ success: boolean; sessions: CloudSessionSummary[]; count: number; error?: string }> {
 	try {
-		const cleanCloud = cloudName.trim();
+		const adminPin = getAdminPinFromStorage(pin);
+
+		try {
+			const res = await fetch(`/api/sessions?limit=2000&_t=${Date.now()}`, {
+				cache: 'no-store',
+				headers: {
+					'Cache-Control': 'no-cache',
+					Accept: 'application/json',
+					'x-admin-pin': adminPin
+				}
+			});
+
+			if (res.status === 401) {
+				const errJson = await res.json().catch(() => ({}));
+				return {
+					success: false,
+					sessions: [],
+					count: 0,
+					error: errJson?.error || 'PIN Admin ditolak oleh server Cloudflare (HTTP 401).'
+				};
+			}
+
+			if (res.ok) {
+				const json = await res.json();
+				if (json?.success && Array.isArray(json.sessions)) {
+					return {
+						success: true,
+						sessions: json.sessions,
+						count: json.sessions.length
+					};
+				}
+			}
+		} catch (apiErr) {
+			console.warn('[CloudRetrieve] /api/sessions fetch warning:', apiErr);
+		}
+
+		// Legacy Cloudinary fallback if /api/sessions is unreachable (e.g., pure static vite dev)
+		const cleanCloud = (fallbackCloudName || '').trim();
 		if (!cleanCloud) {
-			throw new Error('Cloud Name Cloudinary belum diatur.');
-		}
-
-		let adminPin = pin || '0509';
-		if (!pin && typeof localStorage !== 'undefined') {
-			try {
-				const raw = localStorage.getItem('chekiyuume_kiosk_settings');
-				if (raw) {
-					const parsed = JSON.parse(raw);
-					if (parsed?.adminPin) adminPin = parsed.adminPin;
-				}
-			} catch (_) {}
-		}
-
-		console.log(`[CloudRetrieve] Starting retrieval of sessions manifest from Cloudinary: "${cleanCloud}"...`);
-
-		// Try multiple URL variants to overcome Cloudinary raw naming discrepancies & versions
-		const pinQuery = `&pin=${encodeURIComponent(adminPin)}`;
-		const candidateUrls: string[] = [];
-
-		if (typeof localStorage !== 'undefined') {
-			const cachedUrl = localStorage.getItem('cheki_last_sessions_manifest_url');
-			if (cachedUrl) {
-				const separator = cachedUrl.includes('?') ? '&' : '?';
-				candidateUrls.push(`${cachedUrl}${separator}_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`);
-				const unversionedCached = cachedUrl.replace(/\/raw\/upload\/v[0-9]+\//, '/raw/upload/');
-				const uSep = unversionedCached.includes('?') ? '&' : '?';
-				candidateUrls.push(`${unversionedCached}${uSep}_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`);
-			}
-		}
-
-		candidateUrls.push(
-			`/api/manifest?type=sessions${pinQuery}&_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/sessions_manifest.json?_t=${Date.now()}&_r=${Math.random().toString(36).slice(2, 7)}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/sessions_manifest.json?_t=${Date.now()}`,
-			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json.json?_t=${Date.now()}`
-		);
-
-		let data: any = null;
-		let lastStatus = 0;
-		const testedResults: { url: string; status: number; error?: string }[] = [];
-
-		for (let idx = 0; idx < candidateUrls.length; idx++) {
-			const url = candidateUrls[idx];
-			try {
-				console.log(`[CloudRetrieve] [${idx + 1}/${candidateUrls.length}] Testing URL: ${url}`);
-				const res = await fetch(url, {
-					cache: 'no-store',
-					headers: {
-						'Cache-Control': 'no-cache',
-						'Pragma': 'no-cache',
-						'Accept': 'application/json',
-						'x-admin-pin': adminPin
-					}
-				});
-				lastStatus = res.status;
-				console.log(`[CloudRetrieve] -> HTTP ${res.status} ${res.statusText}`);
-				testedResults.push({ url, status: res.status });
-
-				if (res.ok) {
-					const json = await res.json();
-					let foundSessions: any[] | null = null;
-					if (json && Array.isArray(json.sessions)) {
-						foundSessions = json.sessions;
-					} else if (Array.isArray(json)) {
-						foundSessions = json;
-					}
-
-					if (foundSessions !== null) {
-						data = { sessions: foundSessions };
-						console.log(`[CloudRetrieve] ✓ Manifest found and parsed from: ${url}! Sessions count: ${foundSessions.length}`);
-						if (typeof localStorage !== 'undefined') {
-							localStorage.setItem('cheki_last_sessions_manifest_url', url.split('?')[0]);
-						}
-						break;
-					} else {
-						console.warn(`[CloudRetrieve] JSON at ${url} is valid JSON but does not contain a "sessions" array:`, json);
-					}
-				}
-			} catch (fetchErr: any) {
-				console.warn(`[CloudRetrieve] Fetch failed for ${url}:`, fetchErr?.message || fetchErr);
-				testedResults.push({ url, status: 0, error: fetchErr?.message || String(fetchErr) });
-			}
-		}
-
-		if (!data) {
-			console.error(`[CloudRetrieve] ✗ All ${candidateUrls.length} candidate URLs failed for cloud "${cleanCloud}":`, testedResults);
 			return {
 				success: false,
 				sessions: [],
 				count: 0,
-				error: `Manifest sesi (${cleanCloud}/chekiyuume/sessions_manifest.json) belum ditemukan di Cloudinary (HTTP ${lastStatus || 404}). Pastikan sudah melakukan "Backup ke Cloud" terlebih dahulu atau gunakan fitur "Tarik Sesi via ID / Manifest".`
+				error: 'Gagal terhubung ke API /api/sessions dan Cloud Name kosong.'
 			};
 		}
 
+		const candidateUrls = [
+			`/api/manifest?type=sessions&pin=${encodeURIComponent(adminPin)}&_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions_manifest.json?_t=${Date.now()}`,
+			`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions_manifest.json?_t=${Date.now()}`
+		];
+
+		let lastStatus = 0;
+		for (const url of candidateUrls) {
+			try {
+				const res = await fetch(url, {
+					cache: 'no-store',
+					headers: {
+						'Cache-Control': 'no-cache',
+						Accept: 'application/json',
+						'x-admin-pin': adminPin
+					}
+				});
+				lastStatus = res.status;
+				if (res.ok) {
+					const json = await res.json();
+					const found = Array.isArray(json?.sessions)
+						? json.sessions
+						: Array.isArray(json)
+						? json
+						: null;
+					if (found !== null) {
+						return {
+							success: true,
+							sessions: found,
+							count: found.length
+						};
+					}
+				}
+			} catch (_) {}
+		}
+
 		return {
-			success: true,
-			sessions: data.sessions,
-			count: data.sessions.length
+			success: false,
+			sessions: [],
+			count: 0,
+			error: `Riwayat sesi belum ditemukan di D1 atau manifest Cloudinary (HTTP ${lastStatus || 404}).`
 		};
 	} catch (err: any) {
-		console.error('[CloudRetrieve] ✗ Retrieve sessions from Cloudinary failed:', err);
 		return {
 			success: false,
 			sessions: [],
@@ -1112,7 +1118,17 @@ export async function retrieveSessionsFromCloudinary(
 }
 
 /**
- * Retrieves a single session directly by reading its manifest.json URL or searching its Cloudinary folder
+ * Backward-compatible alias for retrieving all sessions (D1-first with legacy fallback).
+ */
+export async function retrieveSessionsFromCloudinary(
+	cloudName: string,
+	pin?: string
+): Promise<{ success: boolean; sessions: CloudSessionSummary[]; count: number; error?: string }> {
+	return await retrieveSessionsFromCloudDB(pin, cloudName);
+}
+
+/**
+ * Retrieves a single session from Cloudflare D1 first, with legacy Cloudinary folder manifest fallback.
  */
 export async function retrieveSessionBySessionId(
 	sessionQuery: string,
@@ -1122,22 +1138,42 @@ export async function retrieveSessionBySessionId(
 	try {
 		const cleanCloud = cloudName.trim();
 		const cleanQuery = sessionQuery.trim();
-		if (!cleanCloud) throw new Error('Cloud Name Cloudinary belum diisi.');
 		if (!cleanQuery) throw new Error('ID Sesi atau nama folder belum diisi.');
 
-		console.log(`[CloudPull] Searching for session "${cleanQuery}" (guest: "${guestName || ''}") on cloud "${cleanCloud}"...`);
-
-		// If user passed a full manifest URL directly
 		if (cleanQuery.startsWith('http://') || cleanQuery.startsWith('https://')) {
-			console.log(`[CloudPull] Query is a direct manifest URL: ${cleanQuery}`);
 			return await retrieveSessionFromManifestUrl(cleanQuery);
 		}
 
-		// Candidate folder paths
+		// 1. Fast lookup via Cloudflare D1 (/api/sessions/:id)
+		try {
+			const res = await fetch(`/api/sessions/${encodeURIComponent(cleanQuery)}?_t=${Date.now()}`, {
+				cache: 'no-store',
+				headers: { Accept: 'application/json' }
+			});
+			if (res.ok) {
+				const data = await res.json();
+				if (data?.success && data.session && (data.session.photoUrl || data.session.videoUrl)) {
+					return {
+						success: true,
+						session: data.session
+					};
+				}
+			}
+		} catch (apiErr) {
+			console.warn('[CloudPull] /api/sessions/:id lookup warning:', apiErr);
+		}
+
+		if (!cleanCloud) {
+			return {
+				success: false,
+				error: `Sesi "${cleanQuery}" tidak ditemukan di database D1.`
+			};
+		}
+
+		// 2. Fallback to legacy per-session Cloudinary manifest.json folder structure
 		const candidateFolders: string[] = [];
 		if (guestName?.trim()) {
-			const cleanGuest = guestName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 30);
-			candidateFolders.push(`${cleanGuest}_${cleanQuery}`);
+			candidateFolders.push(`${sanitizeGuestName(guestName)}_${cleanQuery}`);
 		}
 		if (cleanQuery.includes('_')) {
 			candidateFolders.push(cleanQuery);
@@ -1145,32 +1181,21 @@ export async function retrieveSessionBySessionId(
 		candidateFolders.push(`guest_${cleanQuery}`);
 		candidateFolders.push(cleanQuery);
 
-		console.log(`[CloudPull] Testing folder candidates:`, candidateFolders);
-
-		const testedUrls: { url: string; status: number }[] = [];
-
 		for (const folder of candidateFolders) {
 			const candidateUrls = [
 				`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions/${folder}/manifest.json?_t=${Date.now()}`,
-				`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions/${folder}/manifest.json?_t=${Date.now()}`,
-				`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions/${folder}/manifest?_t=${Date.now()}`,
-				`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions/${folder}/manifest?_t=${Date.now()}`
+				`https://res.cloudinary.com/${cleanCloud}/raw/upload/v1/chekiyuume/sessions/${folder}/manifest.json?_t=${Date.now()}`
 			];
 
 			for (const mUrl of candidateUrls) {
 				try {
-					console.log(`[CloudPull] Checking candidate: ${mUrl}`);
 					const res = await fetch(mUrl, {
 						cache: 'no-store',
-						headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
+						headers: { 'Cache-Control': 'no-cache', Accept: 'application/json' }
 					});
-					testedUrls.push({ url: mUrl, status: res.status });
-					console.log(`[CloudPull] -> HTTP ${res.status}`);
-
 					if (res.ok) {
 						const manifestData = await res.json();
 						if (manifestData && (manifestData.sessionId || manifestData.photoUrl)) {
-							console.log('[CloudPull] ✓ Session manifest found & parsed:', manifestData);
 							return {
 								success: true,
 								session: {
@@ -1182,26 +1207,24 @@ export async function retrieveSessionBySessionId(
 									videoUrl: manifestData.videoUrl,
 									shareUrl: manifestData.shareUrl,
 									manifestUrl: mUrl,
-									photosCount: manifestData.photosCount || (Array.isArray(manifestData.photos) ? manifestData.photos.length : undefined),
+									photosCount:
+										manifestData.photosCount ||
+										(Array.isArray(manifestData.photos) ? manifestData.photos.length : undefined),
 									printCount: manifestData.printCount || 0,
 									createdAt: manifestData.createdAt || Date.now()
 								}
 							};
 						}
 					}
-				} catch (fetchErr: any) {
-					console.warn(`[CloudPull] Fetch error at ${mUrl}:`, fetchErr?.message || fetchErr);
-				}
+				} catch (_) {}
 			}
 		}
 
-		console.error(`[CloudPull] ✗ Session "${cleanQuery}" not found in any tested candidates:`, testedUrls);
 		return {
 			success: false,
-			error: `Manifest untuk sesi "${cleanQuery}" tidak ditemukan di folder chekiyuume/sessions/ pada Cloudinary ${cleanCloud}. Periksa console (F12) untuk detail URL yang diuji.`
+			error: `Sesi "${cleanQuery}" tidak ditemukan di Cloudflare D1 maupun folder Cloudinary ${cleanCloud}.`
 		};
 	} catch (err: any) {
-		console.error('[CloudPull] ✗ retrieveSessionBySessionId failed:', err);
 		return {
 			success: false,
 			error: err?.message || String(err)
@@ -1216,12 +1239,10 @@ export async function retrieveSessionFromManifestUrl(
 	url: string
 ): Promise<{ success: boolean; session?: CloudSessionSummary; error?: string }> {
 	try {
-		console.log(`[CloudManifest] Fetching manifest from URL: ${url}`);
 		const res = await fetch(url, {
 			cache: 'no-store',
-			headers: { 'Cache-Control': 'no-cache', 'Accept': 'application/json' }
+			headers: { 'Cache-Control': 'no-cache', Accept: 'application/json' }
 		});
-		console.log(`[CloudManifest] -> HTTP ${res.status}`);
 		if (!res.ok) {
 			throw new Error(`Gagal mengunduh manifest dari URL (HTTP ${res.status})`);
 		}
@@ -1229,7 +1250,6 @@ export async function retrieveSessionFromManifestUrl(
 		if (!data || (!data.sessionId && !data.photoUrl)) {
 			throw new Error('Format berkas JSON bukan manifest sesi ChekiYuume yang valid.');
 		}
-		console.log('[CloudManifest] ✓ Successfully loaded manifest:', data);
 		return {
 			success: true,
 			session: {
@@ -1241,13 +1261,13 @@ export async function retrieveSessionFromManifestUrl(
 				videoUrl: data.videoUrl,
 				shareUrl: data.shareUrl,
 				manifestUrl: url,
-				photosCount: data.photosCount || (Array.isArray(data.photos) ? data.photos.length : undefined),
+				photosCount:
+					data.photosCount || (Array.isArray(data.photos) ? data.photos.length : undefined),
 				printCount: data.printCount || 0,
 				createdAt: data.createdAt || Date.now()
 			}
 		};
 	} catch (err: any) {
-		console.error('[CloudManifest] ✗ Failed to load manifest from URL:', err);
 		return {
 			success: false,
 			error: err?.message || String(err)
@@ -1275,12 +1295,11 @@ export async function checkCloudinaryResourceExists(url: string, timeoutMs: numb
 			signal: controller.signal,
 			headers: {
 				'Cache-Control': 'no-cache, no-store, must-revalidate',
-				'Pragma': 'no-cache'
+				Pragma: 'no-cache'
 			}
 		});
 		clearTimeout(timer);
 
-		// If Cloudinary returned 404 Not Found or 410 Gone, the asset is definitely deleted!
 		if (res.status === 404 || res.status === 410) {
 			return false;
 		}
@@ -1289,14 +1308,12 @@ export async function checkCloudinaryResourceExists(url: string, timeoutMs: numb
 			return true;
 		}
 
-		// Fallback for image URLs if status is opaque/unexpected
 		if (url.match(/\.(png|jpe?g|webp|gif)/i)) {
 			return await testImageLoad(testUrl, timeoutMs);
 		}
 
 		return false;
-	} catch (err: any) {
-		// Fallback for image URLs on network or CORS rejection
+	} catch {
 		if (url.match(/\.(png|jpe?g|webp|gif)/i)) {
 			return await testImageLoad(testUrl, timeoutMs);
 		}
@@ -1355,7 +1372,6 @@ export async function checkSessionExistsInCloudinary(
 	const cleanCloud = cloudName.trim();
 	if (!cleanCloud) return false;
 
-	// 1. If explicit photoUrl is given (e.g. from manifest or cloudPhotoUrl)
 	const primaryPhotoUrl =
 		session.cloudPhotoUrl && session.cloudPhotoUrl.startsWith('http') && session.cloudPhotoUrl.includes('cloudinary.com')
 			? session.cloudPhotoUrl
@@ -1370,21 +1386,12 @@ export async function checkSessionExistsInCloudinary(
 		if (exists) return true;
 	}
 
-	// 2. Check manifestUrl if available
 	if (session.manifestUrl && session.manifestUrl.startsWith('http') && session.manifestUrl.includes('cloudinary.com')) {
 		const exists = await checkCloudinaryResourceExists(session.manifestUrl);
 		if (exists) return true;
 	}
 
-	// 3. Fallback candidate URLs based on folder convention chekiyuume/sessions/{guest}_{sessionId}
-	const sanitizedGuest = session.guestName
-		? session.guestName
-				.trim()
-				.toLowerCase()
-				.replace(/[^a-z0-9_-]/g, '_')
-				.slice(0, 30)
-		: 'guest';
-
+	const sanitizedGuest = sanitizeGuestName(session.guestName);
 	const candidates = [
 		`https://res.cloudinary.com/${cleanCloud}/image/upload/chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}/photostrip_${session.sessionId}.png`,
 		`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}/manifest.json`,
@@ -1428,7 +1435,6 @@ export async function verifyActiveCloudinarySessions(
 			if (res.exists) {
 				activeSessions.push(res.session);
 			} else {
-				console.log(`[CloudVerify] Session "${res.session.sessionId}" folder not found on Cloudinary (404/deleted)`);
 				deletedSessionIds.push(res.session.sessionId);
 			}
 		}
@@ -1443,30 +1449,77 @@ export async function verifyActiveCloudinarySessions(
 }
 
 /**
- * Updates the global sessions_manifest.json on Cloudinary with a cleaned list of active sessions
+ * Deletes pruned/deleted session IDs from Cloudflare D1.
+ */
+export async function pruneDeletedSessionsFromCloudDB(
+	deletedSessionIds: string[],
+	adminPin?: string
+): Promise<{ success: boolean; d1Unavailable?: boolean; deletedCount?: number }> {
+	if (!deletedSessionIds || deletedSessionIds.length === 0) {
+		return { success: true, deletedCount: 0 };
+	}
+	try {
+		const pin = getAdminPinFromStorage(adminPin);
+		const res = await fetch('/api/sessions', {
+			method: 'DELETE',
+			headers: {
+				'Content-Type': 'application/json',
+				'x-admin-pin': pin
+			},
+			body: JSON.stringify({ sessionIds: deletedSessionIds })
+		});
+
+		if (res.status === 503 || res.status === 404) {
+			return { success: false, d1Unavailable: true };
+		}
+
+		const data = await res.json().catch(() => ({}));
+		return {
+			success: Boolean(res.ok && data?.success),
+			deletedCount: data?.deletedCount
+		};
+	} catch {
+		return { success: false, d1Unavailable: true };
+	}
+}
+
+/**
+ * Updates D1 (and falls back to legacy Cloudinary manifest if D1 unavailable) after pruning deleted sessions.
  */
 export async function updateGlobalSessionsManifestInCloudinary(
 	activeSessions: CloudSessionSummary[],
 	cloudName: string,
-	uploadPreset: string
+	uploadPreset: string,
+	deletedSessionIds?: string[],
+	adminPin?: string
 ): Promise<boolean> {
 	try {
+		if (deletedSessionIds && deletedSessionIds.length > 0) {
+			const dbRes = await pruneDeletedSessionsFromCloudDB(deletedSessionIds, adminPin);
+			if (dbRes.success) return true;
+			if (!dbRes.d1Unavailable) return false;
+		}
+
 		const cleanCloud = cloudName.trim();
 		const cleanPreset = uploadPreset.trim();
 		if (!cleanCloud || !cleanPreset) return false;
 
-		const manifestData = {
-			version: '1.0',
-			updatedAt: Date.now(),
-			totalSessions: activeSessions.length,
-			sessions: activeSessions
-		};
+		const blob = new Blob(
+			[
+				JSON.stringify(
+					{
+						version: '1.0',
+						updatedAt: Date.now(),
+						totalSessions: activeSessions.length,
+						sessions: activeSessions
+					},
+					null,
+					2
+				)
+			],
+			{ type: 'application/json' }
+		);
 
-		const blob = new Blob([JSON.stringify(manifestData, null, 2)], {
-			type: 'application/json'
-		});
-
-		console.log(`[CloudSync] Overwriting global sessions_manifest.json with ${activeSessions.length} active sessions...`);
 		const uploadedUrl = await uploadToCloudinary(blob, 'raw', cleanCloud, cleanPreset, {
 			folder: 'chekiyuume',
 			publicId: 'sessions_manifest.json',
@@ -1478,10 +1531,65 @@ export async function updateGlobalSessionsManifestInCloudinary(
 		if (typeof localStorage !== 'undefined' && uploadedUrl) {
 			localStorage.setItem('cheki_last_sessions_manifest_url', uploadedUrl);
 		}
-		console.log('[CloudSync] ✓ Global manifest successfully pruned & updated! URL:', uploadedUrl);
 		return true;
 	} catch (e) {
-		console.warn('[CloudSync] Failed to update global sessions manifest after pruning:', e);
+		console.warn('[CloudSync] Failed to prune/update sessions:', e);
 		return false;
+	}
+}
+
+export interface LegacyMigrationResult {
+	success: boolean;
+	importedSessions: number;
+	totalLegacySessions: number;
+	skippedSessions: number;
+	importedFrames: number;
+	totalLegacyFrames: number;
+	skippedFrames: number;
+	totalSessionsInD1?: number;
+	totalFramesInD1?: number;
+	error?: string;
+}
+
+/**
+ * Triggers one-click idempotent migration from legacy Cloudinary manifests into Cloudflare D1.
+ */
+export async function migrateLegacyCloudinaryToD1(
+	adminPin?: string
+): Promise<LegacyMigrationResult> {
+	try {
+		const pin = getAdminPinFromStorage(adminPin);
+		const res = await fetch('/api/migrate-legacy', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'x-admin-pin': pin
+			}
+		});
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok || !data?.success) {
+			return {
+				success: false,
+				importedSessions: 0,
+				totalLegacySessions: 0,
+				skippedSessions: 0,
+				importedFrames: 0,
+				totalLegacyFrames: 0,
+				skippedFrames: 0,
+				error: data?.error || `HTTP ${res.status}`
+			};
+		}
+		return data as LegacyMigrationResult;
+	} catch (err: any) {
+		return {
+			success: false,
+			importedSessions: 0,
+			totalLegacySessions: 0,
+			skippedSessions: 0,
+			importedFrames: 0,
+			totalLegacyFrames: 0,
+			skippedFrames: 0,
+			error: err?.message || String(err)
+		};
 	}
 }

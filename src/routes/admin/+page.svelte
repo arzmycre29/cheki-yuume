@@ -23,7 +23,11 @@
 		uploadToCloudinary,
 		uploadCustomFrameOverlayToCloudinary,
 		backupCustomFramesToCloudinary,
+		backupCustomFramesToCloudDB,
 		retrieveCustomFramesFromCloudinary,
+		retrieveCustomFramesFromCloudDB,
+		deleteCustomFrameFromCloudDB,
+		clearCustomFramesInCloudDB,
 		backupAllSessionsToCloudinary,
 		retrieveSessionsFromCloudinary,
 		retrieveSessionBySessionId,
@@ -31,7 +35,9 @@
 		testCloudinaryConnection,
 		verifyActiveCloudinarySessions,
 		checkSessionExistsInCloudinary,
-		updateGlobalSessionsManifestInCloudinary
+		updateGlobalSessionsManifestInCloudinary,
+		pruneDeletedSessionsFromCloudDB,
+		migrateLegacyCloudinaryToD1
 	} from '$lib/services/cloudStorage';
 	import PrintModal from '$lib/components/PrintModal.svelte';
 	import { Camera2Service, type Camera2Device } from '$lib/services/camera2Service';
@@ -71,7 +77,8 @@
 		FileJson,
 		Search,
 		Eye,
-		EyeOff
+		EyeOff,
+		Database
 	} from '@lucide/svelte';
 
 	let activeTab = $state<'general' | 'camera' | 'cloud' | 'sessions' | 'frames'>('sessions');
@@ -94,9 +101,11 @@
 	let isTestingUvc = $state(false);
 	let uvcTestResult = $state<UvcCaptureResult | null>(null);
 
-	// Cloudinary Sync & Test States
+	// Cloudinary & D1 Sync & Test States
 	let isSyncingFrames = $state(false);
 	let isBackingUpFrames = $state(false);
+	let isMigratingLegacy = $state(false);
+	let legacyMigrationMessage = $state('');
 	let isTestingCloudinary = $state(false);
 	let cloudinaryTestResult = $state<{ success: boolean; message: string; testUrl?: string } | null>(null);
 
@@ -140,20 +149,15 @@
 			navigator.mediaDevices.addEventListener('devicechange', refreshCameras);
 		}
 
-		// Auto-sync custom frames from Cloudinary on mount if configured
-		if (formSettings.cloudProvider === 'cloudinary' && formSettings.cloudinaryCloudName?.trim()) {
-			console.log(`[AdminMount] Auto-syncing custom frames from Cloudinary (cloud: "${formSettings.cloudinaryCloudName}")...`);
-			try {
-				const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
-				if (res.success) {
-					console.log(`[AdminMount] ✓ Synced ${res.frames.length} custom frames from Cloud.`);
-					customFramesStore.syncFromRemote(res.frames);
-				} else {
-					console.log('[AdminMount] Custom frames auto-sync result:', res);
-				}
-			} catch (frameErr) {
-				console.warn('[AdminMount] Custom frames auto-sync error:', frameErr);
+		// Auto-sync custom frames from Cloudflare D1 (and legacy Cloudinary fallback) on mount
+		try {
+			const res = await retrieveCustomFramesFromCloudDB(formSettings.cloudinaryCloudName);
+			if (res.success) {
+				console.log(`[AdminMount] ✓ Synced ${res.frames.length} custom frames from D1/Cloud.`);
+				customFramesStore.syncFromRemote(res.frames);
 			}
+		} catch (frameErr) {
+			console.warn('[AdminMount] Custom frames auto-sync error:', frameErr);
 		}
 	});
 
@@ -669,14 +673,20 @@
 				}
 			}
 
-			// 4. If any deleted sessions were removed, prune Cloudinary global sessions_manifest.json as well
-			if (deletedIdSet.size > 0 && formSettings.cloudinaryUploadPreset?.trim()) {
-				console.log(`[AdminSync] Pruning ${deletedIdSet.size} deleted sessions from global Cloudinary manifest...`);
-				await updateGlobalSessionsManifestInCloudinary(
-					finalActiveSessions,
-					formSettings.cloudinaryCloudName,
-					formSettings.cloudinaryUploadPreset
-				);
+			// 4. If any deleted sessions were removed, prune them from Cloudflare D1 (and legacy manifest fallback)
+			if (deletedIdSet.size > 0) {
+				const deletedIds = Array.from(deletedIdSet);
+				console.log(`[AdminSync] Pruning ${deletedIds.length} deleted sessions from Cloudflare D1 / Cloud...`);
+				await pruneDeletedSessionsFromCloudDB(deletedIds, formSettings.adminPin);
+				if (formSettings.cloudinaryUploadPreset?.trim()) {
+					await updateGlobalSessionsManifestInCloudinary(
+						finalActiveSessions,
+						formSettings.cloudinaryCloudName,
+						formSettings.cloudinaryUploadPreset,
+						deletedIds,
+						formSettings.adminPin
+					);
+				}
 			}
 
 			// 5. Reload sessions in UI so deleted ones disappear instantly from the list
@@ -701,6 +711,35 @@
 			alert(`Gagal mengambil riwayat dari Cloud: ${err?.message || err}`);
 		} finally {
 			isSyncingSessions = false;
+			setTimeout(() => (saveMessage = ''), 5000);
+		}
+	}
+
+	async function handleMigrateLegacyToD1() {
+		if (isMigratingLegacy) return;
+		isMigratingLegacy = true;
+		legacyMigrationMessage = '';
+		try {
+			const res = await migrateLegacyCloudinaryToD1(formSettings.adminPin);
+			if (res.success) {
+				const msg = `Migrasi D1 selesai! Diimpor: ${res.importedSessions} sesi baru (${res.skippedSessions} sudah ada) & ${res.importedFrames} frame baru (${res.skippedFrames} sudah ada).`;
+				legacyMigrationMessage = msg;
+				saveMessage = `Berhasil mengimpor ${res.importedSessions} sesi & ${res.importedFrames} frame ke Cloudflare D1!`;
+				await handleRetrieveFramesFromCloud();
+				if (formSettings.cloudProvider === 'cloudinary' && formSettings.cloudinaryCloudName?.trim()) {
+					await handleSyncSessionsFromCloud();
+				}
+			} else {
+				const errMsg = res.error || 'Gagal mengimpor data lama ke Cloudflare D1.';
+				legacyMigrationMessage = `Gagal: ${errMsg}`;
+				alert(errMsg);
+			}
+		} catch (err: any) {
+			const errMsg = err?.message || String(err);
+			legacyMigrationMessage = `Error: ${errMsg}`;
+			alert(`Gagal menjalankan migrasi D1: ${errMsg}`);
+		} finally {
+			isMigratingLegacy = false;
 			setTimeout(() => (saveMessage = ''), 5000);
 		}
 	}
@@ -802,28 +841,20 @@
 	}
 
 	async function handleRetrieveFramesFromCloud() {
-		if (
-			formSettings.cloudProvider !== 'cloudinary' ||
-			!formSettings.cloudinaryCloudName?.trim()
-		) {
-			alert('Mohon atur dan simpan Cloudinary Cloud Name terlebih dahulu di tab Cloud 30-Day.');
-			return;
-		}
-
 		isSyncingFrames = true;
 		try {
-			const res = await retrieveCustomFramesFromCloudinary(formSettings.cloudinaryCloudName);
+			const res = await retrieveCustomFramesFromCloudDB(formSettings.cloudinaryCloudName);
 			if (res.success && res.frames.length > 0) {
 				customFramesStore.syncFromRemote(res.frames);
-				saveMessage = `Berhasil menyinkronkan ${res.count} frame kustom dari Cloudinary!`;
+				saveMessage = `Berhasil menyinkronkan ${res.count} frame kustom dari Cloudflare D1!`;
 			} else if (res.success) {
 				customFramesStore.syncFromRemote([]);
-				saveMessage = 'Sinkronisasi selesai: Cloudinary tidak memiliki custom frame (kembali ke default).';
+				saveMessage = 'Sinkronisasi selesai: Database D1 belum memiliki custom frame (kembali ke default).';
 			} else {
-				alert(res.error || 'Gagal menyinkronkan frame dari Cloudinary.');
+				alert(res.error || 'Gagal menyinkronkan frame dari Cloud / D1.');
 			}
 		} catch (err: any) {
-			alert(`Gagal mengambil frame dari Cloud: ${err?.message || err}`);
+			alert(`Gagal mengambil frame dari Cloud / D1: ${err?.message || err}`);
 		} finally {
 			isSyncingFrames = false;
 			setTimeout(() => (saveMessage = ''), 4000);
@@ -831,36 +862,26 @@
 	}
 
 	async function handleBackupFramesToCloud() {
-		if (
-			formSettings.cloudProvider !== 'cloudinary' ||
-			!formSettings.cloudinaryCloudName?.trim() ||
-			!formSettings.cloudinaryUploadPreset?.trim()
-		) {
-			alert('Mohon lengkapi Cloud Name & Upload Preset Cloudinary di tab Cloud 30-Day terlebih dahulu.');
-			return;
-		}
-
 		const currentFrames = get(customFramesStore);
 		const customFrames = currentFrames.filter((f) => f.id.startsWith('custom-'));
 		if (customFrames.length === 0) {
-			alert('Belum ada custom frame untuk dicadangkan ke Cloudinary. Tambahkan frame kustom terlebih dahulu.');
+			alert('Belum ada custom frame untuk disimpan ke Cloudflare D1. Tambahkan frame kustom terlebih dahulu.');
 			return;
 		}
 
 		isBackingUpFrames = true;
 		try {
-			const res = await backupCustomFramesToCloudinary(
-				currentFrames,
-				formSettings.cloudinaryCloudName,
-				formSettings.cloudinaryUploadPreset
-			);
+			const res = await backupCustomFramesToCloudDB(currentFrames, formSettings.adminPin, {
+				cloudName: formSettings.cloudinaryCloudName,
+				uploadPreset: formSettings.cloudinaryUploadPreset
+			});
 			if (res.success) {
-				saveMessage = `Berhasil mencadangkan ${res.count} custom frame ke Cloudinary (chekiyuume/frames_manifest.json)!`;
+				saveMessage = `Berhasil menyimpan ${res.count} custom frame ke Cloudflare D1!`;
 			} else {
-				alert(res.error || 'Gagal mencadangkan frame ke Cloudinary.');
+				alert(res.error || 'Gagal menyimpan frame ke Cloudflare D1.');
 			}
 		} catch (err: any) {
-			alert(`Gagal mencadangkan frame: ${err?.message || err}`);
+			alert(`Gagal menyimpan frame: ${err?.message || err}`);
 		} finally {
 			isBackingUpFrames = false;
 			setTimeout(() => (saveMessage = ''), 4000);
@@ -961,52 +982,55 @@
 	}
 
 	async function autoBackupFrames() {
-		if (
-			formSettings.cloudProvider === 'cloudinary' &&
-			formSettings.cloudinaryCloudName?.trim() &&
-			formSettings.cloudinaryUploadPreset?.trim()
-		) {
-			try {
-				await backupCustomFramesToCloudinary(
-					get(customFramesStore),
-					formSettings.cloudinaryCloudName,
-					formSettings.cloudinaryUploadPreset
-				);
-			} catch (e) {
-				console.warn('[Frames] Auto backup manifest error:', e);
-			}
+		if (formSettings.cloudProvider === 'none') return;
+		try {
+			await backupCustomFramesToCloudDB(get(customFramesStore), formSettings.adminPin, {
+				cloudName: formSettings.cloudinaryCloudName,
+				uploadPreset: formSettings.cloudinaryUploadPreset
+			});
+		} catch (e) {
+			console.warn('[Frames] Auto sync D1 error:', e);
 		}
 	}
 
-	function handleDeleteFrame(frameId: string, name: string) {
+	async function handleDeleteFrame(frameId: string, name: string) {
 		if (confirm(`Hapus template frame "${name}"?`)) {
 			customFramesStore.deleteFrame(frameId);
 			saveMessage = 'Frame berhasil dihapus!';
 			setTimeout(() => (saveMessage = ''), 3000);
-			autoBackupFrames();
+			if (formSettings.cloudProvider !== 'none') {
+				const deletedFromD1 = await deleteCustomFrameFromCloudDB(frameId, formSettings.adminPin);
+				if (!deletedFromD1) {
+					await autoBackupFrames();
+				}
+			}
 		}
 	}
 
 	async function handleResetFrames() {
-		if (confirm('Kembalikan semua frame ke pengaturan bawaan standar? Tindakan ini juga akan membersihkan custom frame di Cloudinary.')) {
+		if (confirm('Kembalikan semua frame ke pengaturan bawaan standar? Tindakan ini juga akan membersihkan custom frame di Cloudflare D1 / Cloud.')) {
 			customFramesStore.resetToDefault();
 			saveMessage = 'Frame dikembalikan ke setelan pabrik!';
 			setTimeout(() => (saveMessage = ''), 3000);
 
-			if (
-				formSettings.cloudProvider === 'cloudinary' &&
-				formSettings.cloudinaryCloudName?.trim() &&
-				formSettings.cloudinaryUploadPreset?.trim()
-			) {
+			if (formSettings.cloudProvider !== 'none') {
 				try {
-					await backupCustomFramesToCloudinary(
-						[],
-						formSettings.cloudinaryCloudName,
-						formSettings.cloudinaryUploadPreset
-					);
-					console.log('[Frames] Cloud frames manifest successfully cleared.');
+					const cleared = await clearCustomFramesInCloudDB(formSettings.adminPin);
+					if (
+						!cleared &&
+						formSettings.cloudinaryCloudName?.trim() &&
+						formSettings.cloudinaryUploadPreset?.trim()
+					) {
+						await backupCustomFramesToCloudinary(
+							[],
+							formSettings.cloudinaryCloudName,
+							formSettings.cloudinaryUploadPreset,
+							formSettings.adminPin
+						);
+					}
+					console.log('[Frames] Cloud/D1 frames successfully cleared.');
 				} catch (e) {
-					console.warn('[Frames] Failed to clear cloud frames manifest:', e);
+					console.warn('[Frames] Failed to clear cloud/D1 frames:', e);
 				}
 			}
 		}
@@ -1174,17 +1198,16 @@
 
 		customFramesStore.addMultipleFrames(framesToAdd);
 
-		if (isCloudConfigured) {
-			batchUploadProgress = 'Menyinkronkan manifest frame ke Cloudinary...';
+		if (formSettings.cloudProvider !== 'none') {
+			batchUploadProgress = 'Menyinkronkan metadata frame ke Cloudflare D1...';
 			try {
-				await backupCustomFramesToCloudinary(
-					get(customFramesStore),
-					formSettings.cloudinaryCloudName.trim(),
-					formSettings.cloudinaryUploadPreset.trim()
-				);
-				console.log('[BatchFrames] ✓ Manifest frame successfully updated in Cloudinary!');
+				await backupCustomFramesToCloudDB(get(customFramesStore), formSettings.adminPin, {
+					cloudName: formSettings.cloudinaryCloudName?.trim(),
+					uploadPreset: formSettings.cloudinaryUploadPreset?.trim()
+				});
+				console.log('[BatchFrames] ✓ Custom frames successfully synced to D1!');
 			} catch (mErr) {
-				console.warn('[BatchFrames] Manifest sync warning:', mErr);
+				console.warn('[BatchFrames] D1 sync warning:', mErr);
 			}
 		}
 
@@ -1375,10 +1398,27 @@
 							type="button"
 							onclick={() => (isSinglePullModalOpen = true)}
 							class="flex items-center gap-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600 border border-amber-500/40 px-3.5 py-2 text-xs font-bold text-amber-300 hover:text-white transition-all cursor-pointer"
-							title="Tarik sesi spesifik dari Cloudinary menggunakan ID Sesi atau URL manifest.json"
+							title="Tarik sesi spesifik dari Cloudflare D1 atau Cloudinary menggunakan ID Sesi atau URL manifest.json"
 						>
 							<FileJson class="h-3.5 w-3.5" />
 							<span>Tarik via ID / Manifest</span>
+						</button>
+
+						<!-- One-Click Import Legacy Manifest to D1 -->
+						<button
+							type="button"
+							onclick={handleMigrateLegacyToD1}
+							disabled={isMigratingLegacy}
+							class="flex items-center gap-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/40 px-3.5 py-2 text-xs font-bold text-emerald-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
+							title="Impor data sesi & custom frame lama dari manifest Cloudinary ke Cloudflare D1 (aman diulang, tanpa kehilangan data)"
+						>
+							{#if isMigratingLegacy}
+								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+								<span>Mengimpor...</span>
+							{:else}
+								<Database class="h-3.5 w-3.5" />
+								<span>Impor Manifest Lama ke D1</span>
+							{/if}
 						</button>
 
 						<!-- Global Batch Backup All -->
@@ -1639,34 +1679,34 @@
 								{allFrames.length} Total Frame
 							</span>
 						</h2>
-						<p class="text-xs text-zinc-400">Tambah frame kustom bertema event, atur warna latar, upload overlay PNG ke Cloudinary, dan sinkronkan antar-kios</p>
+						<p class="text-xs text-zinc-400">Tambah frame kustom bertema event, atur warna latar, upload overlay PNG ke Cloudinary, dan sinkronkan metadata lewat Cloudflare D1</p>
 					</div>
 
 					<div class="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
-						<!-- Retrieve from Cloudinary Button -->
+						<!-- Retrieve from D1 / Cloud Button -->
 						<button
 							type="button"
 							onclick={handleRetrieveFramesFromCloud}
 							disabled={isSyncingFrames}
 							class="flex items-center gap-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600 border border-indigo-500/40 px-3.5 py-2 text-xs font-bold text-indigo-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
-							title="Tarik & sinkronkan daftar template frame dari Cloudinary (chekiyuume/frames_manifest.json)"
+							title="Tarik & sinkronkan daftar template frame dari Cloudflare D1"
 						>
 							{#if isSyncingFrames}
 								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
-								<span>Menarik dari Cloud...</span>
+								<span>Menarik dari D1...</span>
 							{:else}
 								<CloudDownload class="h-3.5 w-3.5" />
 								<span>Tarik dari Cloud</span>
 							{/if}
 						</button>
 
-						<!-- Backup to Cloudinary Button -->
+						<!-- Backup to D1 / Cloud Button -->
 						<button
 							type="button"
 							onclick={handleBackupFramesToCloud}
 							disabled={isBackingUpFrames}
 							class="flex items-center gap-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600 border border-purple-500/40 px-3.5 py-2 text-xs font-bold text-purple-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
-							title="Cadangkan seluruh konfigurasi custom frame ke Cloudinary"
+							title="Simpan seluruh konfigurasi custom frame ke Cloudflare D1"
 						>
 							{#if isBackingUpFrames}
 								<RefreshCw class="h-3.5 w-3.5 animate-spin" />
@@ -2454,11 +2494,44 @@
 
 					<!-- Structure Info Box -->
 					<div class="rounded-2xl bg-zinc-950/60 border border-zinc-800/80 p-4 text-[11px] text-zinc-400 space-y-1.5 font-mono">
-						<div class="text-xs font-bold text-zinc-300 font-sans mb-1">📁 Struktur Folder Cloudinary Otomatis:</div>
-						<p>• <strong>chekiyuume/sessions/{`{guest}_{sessionId}`}/photostrip.png</strong> (Foto strip)</p>
-						<p>• <strong>chekiyuume/sessions/{`{guest}_{sessionId}`}/videostrip.mp4</strong> (Video BTS strip)</p>
-						<p>• <strong>chekiyuume/frames/</strong> (Template frame overlay PNG)</p>
-						<p>• <strong>chekiyuume/frames_manifest.json</strong> (Backup konfigurasi frame)</p>
+						<div class="text-xs font-bold text-zinc-300 font-sans mb-1">⚡ Arsitektur Hybrid: Cloudflare D1 (Database) + Cloudinary (Media):</div>
+						<p>• <strong>Cloudinary:</strong> chekiyuume/sessions/{`{guest}_{sessionId}`}/photostrip.png & videostrip.mp4</p>
+						<p>• <strong>Cloudinary:</strong> chekiyuume/frames/ (Template frame overlay PNG)</p>
+						<p>• <strong>Cloudflare D1 (SQLite):</strong> Tabel <code>sessions</code> & <code>custom_frames</code> (query cepat, aman privasi, bebas race condition)</p>
+					</div>
+
+					<!-- Legacy Manifest Migration to Cloudflare D1 -->
+					<div class="rounded-2xl bg-emerald-950/25 border border-emerald-500/30 p-4 flex flex-col gap-3">
+						<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+							<div>
+								<div class="flex items-center gap-2 text-xs font-bold text-emerald-300">
+									<Database class="h-4 w-4" />
+									<span>Migrasi Data Lama (Cloudinary Manifest → Cloudflare D1)</span>
+								</div>
+								<p class="text-[11px] text-zinc-400 mt-1">
+									Impor sesi & custom frame lama dari <code>sessions_manifest.json</code> / <code>frames_manifest.json</code> ke Cloudflare D1 tanpa menghapus file lama di Cloudinary.
+								</p>
+							</div>
+							<button
+								type="button"
+								onclick={handleMigrateLegacyToD1}
+								disabled={isMigratingLegacy}
+								class="shrink-0 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 py-2.5 text-xs font-bold text-white shadow-md disabled:opacity-50 cursor-pointer transition-all"
+							>
+								{#if isMigratingLegacy}
+									<RefreshCw class="h-3.5 w-3.5 animate-spin" />
+									<span>Mengimpor ke D1...</span>
+								{:else}
+									<Database class="h-3.5 w-3.5" />
+									<span>Impor Manifest Lama ke D1</span>
+								{/if}
+							</button>
+						</div>
+						{#if legacyMigrationMessage}
+							<p class="text-xs font-semibold text-emerald-300 bg-emerald-950/50 border border-emerald-500/30 rounded-xl px-3 py-2">
+								{legacyMigrationMessage}
+							</p>
+						{/if}
 					</div>
 
 				{:else if formSettings.cloudProvider !== 'none'}
