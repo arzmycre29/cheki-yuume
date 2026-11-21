@@ -722,8 +722,33 @@ export async function compileSequentialVideostrip(
 
 			let encoderFailed = false;
 			let encoderErrorMessage = '';
+			const frameDurationMicros = Math.round(1_000_000 / fps);
 			const encoder = new VideoEncoder({
-				output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+				output: (chunk, meta) => {
+					try {
+						if (
+							typeof chunk.duration === 'number' &&
+							Number.isFinite(chunk.duration) &&
+							chunk.duration >= 0
+						) {
+							muxer.addVideoChunk(chunk, meta);
+						} else {
+							const data = new Uint8Array(chunk.byteLength);
+							chunk.copyTo(data);
+							muxer.addVideoChunkRaw(
+								data,
+								chunk.type,
+								Math.max(0, chunk.timestamp || 0),
+								frameDurationMicros,
+								meta
+							);
+						}
+					} catch (muxErr) {
+						console.error('[VideoCompiler] Muxer output error:', muxErr);
+						encoderFailed = true;
+						encoderErrorMessage = String(muxErr);
+					}
+				},
 				error: (e) => {
 					console.error('[VideoCompiler] VideoEncoder error:', e);
 					encoderFailed = true;
@@ -796,7 +821,10 @@ export async function compileSequentialVideostrip(
 						// Encode frame
 						try {
 							const timestampMicros = Math.round(elapsed * 1_000_000);
-							const frame = new VideoFrame(canvas, { timestamp: timestampMicros });
+							const frame = new VideoFrame(canvas, {
+								timestamp: timestampMicros,
+								duration: frameDurationMicros
+							});
 							const isKeyFrame = frameCount % (fps * 2) === 0;
 							encoder.encode(frame, { keyFrame: isKeyFrame });
 							frame.close();

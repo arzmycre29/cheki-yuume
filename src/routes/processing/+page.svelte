@@ -136,14 +136,14 @@
 					}
 				});
 
-				const timeoutPromise = new Promise<null>((res) => setTimeout(() => res(null), 30000));
+				const timeoutPromise = new Promise<null>((res) => setTimeout(() => res(null), 45000));
 				const videoResult = await Promise.race([videoPromise, timeoutPromise]);
 
 				if (videoResult && videoResult.blob && videoResult.url) {
 					logDebug('Video compile success! blob size:', videoResult.blob.size, 'type:', videoResult.blob.type);
 					sessionStore.setVideostrip(videoResult.blob, videoResult.url);
 				} else {
-					logDebug('Video compilation timed out after 30s, proceeding with photostrip');
+					logDebug('Video compilation timed out after 45s, proceeding with photostrip');
 				}
 			} catch (videoErr) {
 				logDebug('ERROR in video compile:', String(videoErr));
