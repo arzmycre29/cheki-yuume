@@ -1,13 +1,16 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { settingsStore } from '$lib/stores/settings';
 	import { networkStore, initNetworkMonitor } from '$lib/services/networkStatus';
 	import { isFullscreen, toggleFullscreen, onFullscreenChange } from '$lib/utils/fullscreen';
 	import { customFramesStore } from '$lib/stores/customFrames';
 	import { retrieveCustomFramesFromCloudDB } from '$lib/services/cloudStorage';
-	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2, WifiOff, CheckCircle2, Eye, EyeOff, RefreshCw } from '@lucide/svelte';
+	import { precacheFrameAssets, prepareFullOfflineCache } from '$lib/services/offlineCache';
+	import { Lock, X, ArrowRight, Shield, Maximize2, Minimize2, WifiOff, CheckCircle2, Eye, EyeOff, RefreshCw, Download } from '@lucide/svelte';
 
 	let { children } = $props();
 
@@ -18,6 +21,60 @@
 	let pinError = $state('');
 	let showPinReveal = $state(false);
 	let isFullscreenActive = $state(false);
+
+	// Offline Frame Cache state (discreet button on Start Page)
+	let isCachingOffline = $state(false);
+	let offlineCacheToast = $state('');
+	let offlineCacheReady = $state(false);
+	let offlineCacheToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function showOfflineToast(msg: string, durationMs = 4000) {
+		offlineCacheToast = msg;
+		if (offlineCacheToastTimer) clearTimeout(offlineCacheToastTimer);
+		if (durationMs > 0) {
+			offlineCacheToastTimer = setTimeout(() => {
+				offlineCacheToast = '';
+			}, durationMs);
+		}
+	}
+
+	async function handlePrepareOfflineCache() {
+		if (isCachingOffline) return;
+		isCachingOffline = true;
+		offlineCacheReady = false;
+		showOfflineToast('Menyiapkan cache offline...', 0);
+
+		try {
+			// Pull latest custom frames from D1 if online
+			if ($networkStore.isOnline) {
+				const syncRes = await retrieveCustomFramesFromCloudDB($settingsStore.cloudinaryCloudName);
+				if (syncRes.success) {
+					customFramesStore.syncFromRemote(syncRes.frames);
+				}
+			}
+
+			const allFrames = get(customFramesStore);
+			const res = await prepareFullOfflineCache(allFrames, (cached, total) => {
+				if (total > 0) {
+					showOfflineToast(`Menyimpan cache frame offline (${cached}/${total})...`, 0);
+				}
+			});
+
+			offlineCacheReady = res.failed === 0;
+			if (res.total === 0) {
+				showOfflineToast('Siap Offline! Semua aset aplikasi tersimpan.', 4000);
+			} else if (res.failed === 0) {
+				showOfflineToast(`Siap Offline! ${res.cached}/${res.total} frame tersimpan di cache.`, 4500);
+			} else {
+				showOfflineToast(`Cache selesai: ${res.cached}/${res.total} frame (${res.failed} gagal).`, 5000);
+			}
+		} catch (err) {
+			console.warn('[OfflineCache] Manual prepare failed:', err);
+			showOfflineToast('Gagal menyiapkan cache offline.', 4000);
+		} finally {
+			isCachingOffline = false;
+		}
+	}
 
 	onMount(() => {
 		isFullscreenActive = isFullscreen();
@@ -45,15 +102,24 @@
 			})
 			.catch(() => {});
 
-		// Background auto-reconcile custom frames with Cloudflare D1 (and legacy Cloudinary fallback) on startup
+		// Background auto-reconcile custom frames with Cloudflare D1 & auto-precache PNG overlays for offline mode
 		const settings = $settingsStore;
 		retrieveCustomFramesFromCloudDB(settings.cloudinaryCloudName)
 			.then((res) => {
 				if (res.success) {
 					customFramesStore.syncFromRemote(res.frames);
 				}
+				return precacheFrameAssets(get(customFramesStore));
 			})
-			.catch(() => {});
+			.then((cacheRes) => {
+				if (cacheRes && cacheRes.total > 0 && cacheRes.failed === 0) {
+					offlineCacheReady = true;
+				}
+			})
+			.catch(() => {
+				// Still attempt to warm cache from locally stored frames if D1 sync failed
+				precacheFrameAssets(get(customFramesStore)).catch(() => {});
+			});
 
 		return () => {
 			unbindFullscreen();
@@ -126,20 +192,41 @@
 <svelte:window onkeydown={handleKeyDown} />
 
 <main class="relative h-screen w-screen bg-zinc-950 text-zinc-100 flex flex-col overflow-hidden font-sans select-none">
-	<!-- Fullscreen Quick Toggle (Top Left) -->
-	<button
-		type="button"
-		onclick={() => toggleFullscreen()}
-		class="fixed top-3 left-3 z-40 flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl bg-black/40 hover:bg-black/80 text-zinc-400 hover:text-white border border-zinc-800/60 backdrop-blur-md transition-all active:scale-95 cursor-pointer shadow-md opacity-40 hover:opacity-100"
-		title={isFullscreenActive ? 'Keluar Layar Penuh (F11)' : 'Masuk Layar Penuh (F11)'}
-		aria-label="Toggle Fullscreen"
-	>
-		{#if isFullscreenActive}
-			<Minimize2 class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-		{:else}
-			<Maximize2 class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+	<!-- Top Left Quick Controls (Fullscreen + Discreet Offline Cache on Start Page) -->
+	<div class="fixed top-3 left-3 z-40 flex items-center gap-1.5">
+		<button
+			type="button"
+			onclick={() => toggleFullscreen()}
+			class="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl bg-black/40 hover:bg-black/80 text-zinc-400 hover:text-white border border-zinc-800/60 backdrop-blur-md transition-all active:scale-95 cursor-pointer shadow-md opacity-40 hover:opacity-100"
+			title={isFullscreenActive ? 'Keluar Layar Penuh (F11)' : 'Masuk Layar Penuh (F11)'}
+			aria-label="Toggle Fullscreen"
+		>
+			{#if isFullscreenActive}
+				<Minimize2 class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+			{:else}
+				<Maximize2 class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+			{/if}
+		</button>
+
+		{#if page.url.pathname === '/'}
+			<button
+				type="button"
+				onclick={handlePrepareOfflineCache}
+				disabled={isCachingOffline}
+				class="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl bg-black/40 hover:bg-black/80 border border-zinc-800/60 backdrop-blur-md transition-all active:scale-95 cursor-pointer shadow-md opacity-40 hover:opacity-100 disabled:opacity-70 {offlineCacheReady ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-400 hover:text-white'}"
+				title={offlineCacheReady ? 'Cache Offline Siap — Klik untuk perbarui' : 'Simpan Cache Semua Frame untuk Mode Offline'}
+				aria-label="Simpan Cache Offline"
+			>
+				{#if isCachingOffline}
+					<RefreshCw class="h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin text-indigo-400" />
+				{:else if offlineCacheReady}
+					<CheckCircle2 class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+				{:else}
+					<Download class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+				{/if}
+			</button>
 		{/if}
-	</button>
+	</div>
 
 	<!-- Secret Admin Trigger Hotspot (Top Right Corner) -->
 	<button
@@ -161,6 +248,15 @@
 		<div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-indigo-600/95 text-white px-4 py-1.5 rounded-full text-xs font-black shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-none select-none border border-indigo-400">
 			<RefreshCw class="h-3.5 w-3.5 animate-spin" />
 			<span>Menyinkronkan {$networkStore.pendingSyncCount} sesi offline ke Cloud...</span>
+		</div>
+	{:else if offlineCacheToast}
+		<div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-zinc-900/95 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-200 pointer-events-none select-none border border-zinc-700">
+			{#if isCachingOffline}
+				<RefreshCw class="h-3.5 w-3.5 animate-spin text-indigo-400" />
+			{:else}
+				<CheckCircle2 class="h-3.5 w-3.5 text-emerald-400" />
+			{/if}
+			<span>{offlineCacheToast}</span>
 		</div>
 	{:else if $networkStore.reconnectedNotification}
 		<div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-emerald-500/95 text-white px-4 py-1.5 rounded-full text-xs font-black shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-none select-none border border-emerald-400">

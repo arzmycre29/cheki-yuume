@@ -2,6 +2,7 @@
 import { build, files, version } from '$service-worker';
 
 const CACHE = `cheki-cache-v${version}`;
+const FRAMES_CACHE = 'cheki-frames-cache-v1';
 
 // Core application routes to cache for offline SPA navigation
 const ROUTES = ['/', '/admin', '/capture', '/processing', '/result'];
@@ -34,7 +35,8 @@ self.addEventListener('activate', (event) => {
 			await self.clients.claim();
 			const keys = await caches.keys();
 			for (const key of keys) {
-				if (key !== CACHE) {
+				// Preserve persistent custom frames cache across app deployments
+				if (key !== CACHE && key !== FRAMES_CACHE) {
 					console.log('[SW] Purging outdated cache:', key);
 					await caches.delete(key);
 				}
@@ -48,7 +50,32 @@ self.addEventListener('fetch', (event) => {
 
 	const url = new URL(event.request.url);
 
-	// Never intercept Cloudinary uploads, Cloudflare functions API, or cross-origin assets
+	// Cache-first for Cloudinary custom frame overlays & any pre-cached external frame images
+	const isCloudinaryFrameAsset =
+		url.hostname === 'res.cloudinary.com' && url.pathname.includes('/chekiyuume/frames/');
+	const isCrossOriginImage =
+		url.origin !== self.location.origin &&
+		(event.request.destination === 'image' || /\.(png|jpe?g|webp|svg)$/i.test(url.pathname));
+
+	if (isCloudinaryFrameAsset || isCrossOriginImage) {
+		event.respondWith(
+			(async () => {
+				const frameCache = await caches.open(FRAMES_CACHE);
+				const cached =
+					(await frameCache.match(event.request)) || (await frameCache.match(event.request.url));
+				if (cached) return cached;
+
+				const response = await fetch(event.request);
+				if (isCloudinaryFrameAsset && response.ok && response.type !== 'opaque') {
+					frameCache.put(event.request.url, response.clone()).catch(() => {});
+				}
+				return response;
+			})()
+		);
+		return;
+	}
+
+	// Never intercept other cross-origin requests or Cloudflare Pages Functions API
 	if (url.origin !== self.location.origin || url.pathname.startsWith('/api/')) {
 		return;
 	}
