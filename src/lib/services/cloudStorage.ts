@@ -861,10 +861,19 @@ export async function backupAllSessionsToCloudinary(
 				if (!session.cloudShareUrl && existingRemote.shareUrl) shareUrl = existingRemote.shareUrl;
 			}
 
-			const isAlreadyInCloud = Boolean(session.cloudUploadStatus === 'success' && photoUrl);
+			const isAlreadyInCloud = Boolean(
+				photoUrl && (session.cloudUploadStatus === 'success' || existingRemote?.photoUrl)
+			);
 
 			if (skipExisting && isAlreadyInCloud) {
 				skippedCount++;
+				if (!session.cloudPhotoUrl || session.cloudUploadStatus !== 'success') {
+					session.cloudPhotoUrl = photoUrl;
+					session.cloudVideoUrl = videoUrl || session.cloudVideoUrl || null;
+					session.cloudShareUrl = shareUrl || session.cloudShareUrl || null;
+					session.cloudUploadStatus = 'success';
+					await saveSessionToDB(session);
+				}
 				const summary: CloudSessionSummary = {
 					sessionId: session.sessionId,
 					guestName: session.guestName,
@@ -1275,12 +1284,21 @@ export async function retrieveSessionFromManifestUrl(
 	}
 }
 
+export type CloudinaryResourceStatus = 'exists' | 'deleted' | 'unknown';
+
 /**
- * Checks whether an asset or resource still exists on Cloudinary (returns false if 404/410/deleted)
+ * Checks whether an asset still exists on Cloudinary using a lightweight HEAD request.
+ * Returns:
+ * - 'exists'  : HTTP 2xx confirmed
+ * - 'deleted' : HTTP 404 or 410 explicitly returned by Cloudinary
+ * - 'unknown' : timeout, network error, 5xx, or non-definitive response (NEVER treated as deleted)
  */
-export async function checkCloudinaryResourceExists(url: string, timeoutMs: number = 6000): Promise<boolean> {
+export async function checkCloudinaryResourceStatus(
+	url: string,
+	timeoutMs: number = 8000
+): Promise<CloudinaryResourceStatus> {
 	if (!url || typeof url !== 'string' || !url.startsWith('http')) {
-		return false;
+		return 'unknown';
 	}
 
 	const testUrl = url.includes('?') ? `${url}&_cb=${Date.now()}` : `${url}?_cb=${Date.now()}`;
@@ -1290,38 +1308,62 @@ export async function checkCloudinaryResourceExists(url: string, timeoutMs: numb
 		const timer = setTimeout(() => controller.abort(), timeoutMs);
 
 		const res = await fetch(testUrl, {
-			method: 'GET',
+			method: 'HEAD',
 			cache: 'no-store',
-			signal: controller.signal,
-			headers: {
-				'Cache-Control': 'no-cache, no-store, must-revalidate',
-				Pragma: 'no-cache'
-			}
+			signal: controller.signal
 		});
 		clearTimeout(timer);
 
 		if (res.status === 404 || res.status === 410) {
-			return false;
+			return 'deleted';
 		}
 
 		if (res.ok) {
-			return true;
+			return 'exists';
 		}
 
-		if (url.match(/\.(png|jpe?g|webp|gif)/i)) {
-			return await testImageLoad(testUrl, timeoutMs);
+		// Fallback to minimal byte-range GET only if HEAD is rejected (405/403)
+		if (res.status === 405 || res.status === 403) {
+			try {
+				const rangeCtrl = new AbortController();
+				const rangeTimer = setTimeout(() => rangeCtrl.abort(), timeoutMs);
+				const rangeRes = await fetch(testUrl, {
+					method: 'GET',
+					cache: 'no-store',
+					signal: rangeCtrl.signal,
+					headers: { Range: 'bytes=0-0' }
+				});
+				clearTimeout(rangeTimer);
+
+				if (rangeRes.status === 404 || rangeRes.status === 410) return 'deleted';
+				if (rangeRes.ok || rangeRes.status === 206) return 'exists';
+			} catch (_) {}
+
+			if (url.match(/\.(png|jpe?g|webp|gif)/i)) {
+				const loaded = await testImageLoad(testUrl, timeoutMs);
+				return loaded ? 'exists' : 'unknown';
+			}
 		}
 
-		return false;
+		return 'unknown';
 	} catch {
-		if (url.match(/\.(png|jpe?g|webp|gif)/i)) {
-			return await testImageLoad(testUrl, timeoutMs);
-		}
-		return false;
+		// Timeout / AbortError / offline / network blip -> NEVER assume deleted
+		return 'unknown';
 	}
 }
 
-function testImageLoad(url: string, timeoutMs: number = 6000): Promise<boolean> {
+/**
+ * Backward-compatible boolean helper: returns false ONLY if explicitly deleted (404/410).
+ */
+export async function checkCloudinaryResourceExists(
+	url: string,
+	timeoutMs: number = 8000
+): Promise<boolean> {
+	const status = await checkCloudinaryResourceStatus(url, timeoutMs);
+	return status !== 'deleted';
+}
+
+function testImageLoad(url: string, timeoutMs: number = 8000): Promise<boolean> {
 	return new Promise<boolean>((resolve) => {
 		if (typeof Image === 'undefined') {
 			resolve(false);
@@ -1355,8 +1397,74 @@ function testImageLoad(url: string, timeoutMs: number = 6000): Promise<boolean> 
 }
 
 /**
- * Checks if a session folder still exists in Cloudinary by checking its primary photostrip URL,
- * manifest URL, or candidate URLs.
+ * Checks whether a session folder still exists on Cloudinary.
+ * Returns 'deleted' ONLY when Cloudinary explicitly returns 404/410 for all checked URLs
+ * and zero checks encountered timeouts/network errors ('unknown').
+ */
+export async function checkSessionStatusInCloudinary(
+	session: {
+		sessionId: string;
+		guestName?: string;
+		cloudPhotoUrl?: string | null;
+		photoUrl?: string;
+		manifestUrl?: string;
+		photostripDataUrl?: string | null;
+	},
+	cloudName: string
+): Promise<CloudinaryResourceStatus> {
+	const cleanCloud = cloudName.trim();
+	if (!cleanCloud) return 'unknown';
+
+	let sawDeleted = false;
+	let sawUnknown = false;
+
+	const primaryPhotoUrl =
+		session.cloudPhotoUrl && session.cloudPhotoUrl.startsWith('http') && session.cloudPhotoUrl.includes('cloudinary.com')
+			? session.cloudPhotoUrl
+			: session.photoUrl && session.photoUrl.startsWith('http') && session.photoUrl.includes('cloudinary.com')
+			? session.photoUrl
+			: session.photostripDataUrl && session.photostripDataUrl.startsWith('http') && session.photostripDataUrl.includes('cloudinary.com')
+			? session.photostripDataUrl
+			: null;
+
+	if (primaryPhotoUrl) {
+		const status = await checkCloudinaryResourceStatus(primaryPhotoUrl, 8000);
+		if (status === 'exists') return 'exists';
+		if (status === 'unknown') return 'unknown';
+		sawDeleted = true;
+	}
+
+	if (session.manifestUrl && session.manifestUrl.startsWith('http') && session.manifestUrl.includes('cloudinary.com')) {
+		const status = await checkCloudinaryResourceStatus(session.manifestUrl, 6000);
+		if (status === 'exists') return 'exists';
+		if (status === 'unknown') sawUnknown = true;
+		if (status === 'deleted') sawDeleted = true;
+	}
+
+	const sanitizedGuest = sanitizeGuestName(session.guestName);
+	const candidates = [
+		`https://res.cloudinary.com/${cleanCloud}/image/upload/chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}/photostrip_${session.sessionId}.png`,
+		`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}/manifest.json`,
+		`https://res.cloudinary.com/${cleanCloud}/image/upload/chekiyuume/sessions/${session.sessionId}/photostrip_${session.sessionId}.png`,
+		`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions/${session.sessionId}/manifest.json`
+	];
+
+	for (const url of candidates) {
+		if (url === primaryPhotoUrl || url === session.manifestUrl) continue;
+		const status = await checkCloudinaryResourceStatus(url, 5000);
+		if (status === 'exists') return 'exists';
+		if (status === 'unknown') sawUnknown = true;
+		if (status === 'deleted') sawDeleted = true;
+	}
+
+	if (sawDeleted && !sawUnknown) {
+		return 'deleted';
+	}
+	return 'unknown';
+}
+
+/**
+ * Backward-compatible boolean helper: returns false ONLY if session is confirmed deleted (404/410).
  */
 export async function checkSessionExistsInCloudinary(
 	session: {
@@ -1369,55 +1477,27 @@ export async function checkSessionExistsInCloudinary(
 	},
 	cloudName: string
 ): Promise<boolean> {
-	const cleanCloud = cloudName.trim();
-	if (!cleanCloud) return false;
-
-	const primaryPhotoUrl =
-		session.cloudPhotoUrl && session.cloudPhotoUrl.startsWith('http') && session.cloudPhotoUrl.includes('cloudinary.com')
-			? session.cloudPhotoUrl
-			: session.photoUrl && session.photoUrl.startsWith('http') && session.photoUrl.includes('cloudinary.com')
-			? session.photoUrl
-			: session.photostripDataUrl && session.photostripDataUrl.startsWith('http') && session.photostripDataUrl.includes('cloudinary.com')
-			? session.photostripDataUrl
-			: null;
-
-	if (primaryPhotoUrl) {
-		const exists = await checkCloudinaryResourceExists(primaryPhotoUrl);
-		if (exists) return true;
-	}
-
-	if (session.manifestUrl && session.manifestUrl.startsWith('http') && session.manifestUrl.includes('cloudinary.com')) {
-		const exists = await checkCloudinaryResourceExists(session.manifestUrl);
-		if (exists) return true;
-	}
-
-	const sanitizedGuest = sanitizeGuestName(session.guestName);
-	const candidates = [
-		`https://res.cloudinary.com/${cleanCloud}/image/upload/chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}/photostrip_${session.sessionId}.png`,
-		`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions/${sanitizedGuest}_${session.sessionId}/manifest.json`,
-		`https://res.cloudinary.com/${cleanCloud}/image/upload/chekiyuume/sessions/${session.sessionId}/photostrip_${session.sessionId}.png`,
-		`https://res.cloudinary.com/${cleanCloud}/raw/upload/chekiyuume/sessions/${session.sessionId}/manifest.json`
-	];
-
-	for (const url of candidates) {
-		const exists = await checkCloudinaryResourceExists(url, 3000);
-		if (exists) return true;
-	}
-
-	return false;
+	const status = await checkSessionStatusInCloudinary(session, cloudName);
+	return status !== 'deleted';
 }
 
 /**
- * Verifies all remote sessions in parallel batches of 8.
- * Returns filtered active sessions and IDs of sessions whose folders were deleted.
+ * Verifies all remote sessions in parallel batches of 8 using lightweight HEAD requests.
+ * Only sessions explicitly returning 404/410 are placed in deletedSessionIds;
+ * network/timeout errors ('unknown') are safely preserved in activeSessions.
  */
 export async function verifyActiveCloudinarySessions(
 	sessions: CloudSessionSummary[],
 	cloudName: string,
 	onProgress?: (checked: number, total: number) => void
-): Promise<{ activeSessions: CloudSessionSummary[]; deletedSessionIds: string[] }> {
+): Promise<{
+	activeSessions: CloudSessionSummary[];
+	deletedSessionIds: string[];
+	unknownSessionIds: string[];
+}> {
 	const activeSessions: CloudSessionSummary[] = [];
 	const deletedSessionIds: string[] = [];
+	const unknownSessionIds: string[] = [];
 	const total = sessions.length;
 	let checked = 0;
 
@@ -1426,16 +1506,19 @@ export async function verifyActiveCloudinarySessions(
 		const chunk = sessions.slice(i, i + batchSize);
 		const results = await Promise.all(
 			chunk.map(async (cs) => {
-				const exists = await checkSessionExistsInCloudinary(cs, cloudName);
-				return { session: cs, exists };
+				const status = await checkSessionStatusInCloudinary(cs, cloudName);
+				return { session: cs, status };
 			})
 		);
 
 		for (const res of results) {
-			if (res.exists) {
-				activeSessions.push(res.session);
-			} else {
+			if (res.status === 'deleted') {
 				deletedSessionIds.push(res.session.sessionId);
+			} else {
+				activeSessions.push(res.session);
+				if (res.status === 'unknown') {
+					unknownSessionIds.push(res.session.sessionId);
+				}
 			}
 		}
 
@@ -1445,7 +1528,7 @@ export async function verifyActiveCloudinarySessions(
 		}
 	}
 
-	return { activeSessions, deletedSessionIds };
+	return { activeSessions, deletedSessionIds, unknownSessionIds };
 }
 
 /**
@@ -1543,6 +1626,8 @@ export interface LegacyMigrationResult {
 	importedSessions: number;
 	totalLegacySessions: number;
 	skippedSessions: number;
+	skippedDeletedSessions?: number;
+	skippedGhostSessions?: number;
 	importedFrames: number;
 	totalLegacyFrames: number;
 	skippedFrames: number;

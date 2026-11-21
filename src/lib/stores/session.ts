@@ -85,6 +85,11 @@ function persistToSessionStorage(session: SessionData) {
 			stickers: session.stickers || [],
 			photostripDataUrl: session.photostripDataUrl || null,
 			printPhotostripDataUrl: session.printPhotostripDataUrl || null,
+			cloudUploadStatus: session.cloudUploadStatus,
+			cloudPhotoUrl: session.cloudPhotoUrl,
+			cloudVideoUrl: session.cloudVideoUrl,
+			cloudShareUrl: session.cloudShareUrl,
+			isOfflineSaved: session.isOfflineSaved,
 			photos: (session.photos || []).map((p) => ({
 				id: p.id,
 				index: p.index,
@@ -333,9 +338,7 @@ function createSessionStore() {
 					cloudShareUrl: urls?.share ?? s.cloudShareUrl
 				};
 				persistToSessionStorage(updated);
-				if (s.isOfflineSaved) {
-					saveSessionToDB(updated);
-				}
+				saveSessionToDB(updated);
 				return updated;
 			});
 		},

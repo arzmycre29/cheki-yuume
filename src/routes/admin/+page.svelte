@@ -35,6 +35,7 @@
 		testCloudinaryConnection,
 		verifyActiveCloudinarySessions,
 		checkSessionExistsInCloudinary,
+		checkSessionStatusInCloudinary,
 		updateGlobalSessionsManifestInCloudinary,
 		pruneDeletedSessionsFromCloudDB,
 		migrateLegacyCloudinaryToD1
@@ -564,9 +565,9 @@
 			const cur = await getAllSessionsFromDB();
 			const existingMap = new Map(cur.map((s) => [s.sessionId, s]));
 
-			// 1. Verify remote sessions: verify if each session's folder/asset still exists on Cloudinary
+			// 1. Verify remote sessions: verify if each session's folder/asset still exists on Cloudinary via lightweight HEAD
 			saveMessage = `Memverifikasi folder sesi di Cloudinary (0/${res.sessions.length})...`;
-			const { activeSessions, deletedSessionIds } = await verifyActiveCloudinarySessions(
+			const { activeSessions, deletedSessionIds, unknownSessionIds } = await verifyActiveCloudinarySessions(
 				res.sessions,
 				formSettings.cloudinaryCloudName,
 				(checked, total) => {
@@ -578,7 +579,7 @@
 			let localDeletedCount = 0;
 
 			// 2. Also check local sessions that were previously synced to Cloudinary
-			// If their folder was deleted from Cloudinary, remove them from local DB as well
+			// ONLY delete if Cloudinary explicitly confirms 404/410 ('deleted'), NEVER on timeout/network error ('unknown')
 			saveMessage = 'Memeriksa sesi lokal yang terhubung ke Cloudinary...';
 			const cloudLinkedLocalSessions = cur.filter(
 				(s) =>
@@ -597,12 +598,12 @@
 
 				const isInActiveRemote = activeSessions.some((cs) => cs.sessionId === localSession.sessionId);
 				if (!isInActiveRemote) {
-					const stillExists = await checkSessionExistsInCloudinary(
+					const status = await checkSessionStatusInCloudinary(
 						localSession,
 						formSettings.cloudinaryCloudName
 					);
-					if (!stillExists) {
-						console.log(`[AdminSync] Deleting local session ${localSession.sessionId} (folder deleted from Cloudinary)`);
+					if (status === 'deleted') {
+						console.log(`[AdminSync] Deleting local session ${localSession.sessionId} (404/410 confirmed from Cloudinary)`);
 						await deleteSessionFromDB(localSession.sessionId);
 						deletedIdSet.add(localSession.sessionId);
 						localDeletedCount++;
@@ -705,6 +706,7 @@
 			if (addedCount > 0) details.push(`${addedCount} sesi baru ditambahkan`);
 			if (updatedCount > 0) details.push(`${updatedCount} diperbarui`);
 			if (localDeletedCount > 0) details.push(`${localDeletedCount} sesi dibersihkan (folder di Cloudinary sudah dihapus)`);
+			if (unknownSessionIds.length > 0) details.push(`${unknownSessionIds.length} sesi tetap dipertahankan (jaringan lambat)`);
 
 			let summaryMsg = 'Sinkronisasi riwayat selesai! ';
 			if (details.length === 0) {

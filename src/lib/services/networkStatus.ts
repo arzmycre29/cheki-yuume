@@ -133,21 +133,33 @@ function handleDisconnect(reason = 'offline-event') {
 }
 
 /**
+ * Restores previously saved cloudProvider if the app was closed while auto-switched to offline mode.
+ */
+function restoreSavedCloudProviderIfNeeded(): boolean {
+	try {
+		const saved = localStorage.getItem(SAVED_CLOUD_PROVIDER_KEY) as CloudProvider | null;
+		if (saved && saved !== 'none') {
+			const current = get(settingsStore);
+			if (current.cloudProvider === 'none') {
+				settingsStore.updateSettings({ cloudProvider: saved });
+				console.log(`[Network] ⚡ Auto-restored cloudProvider back to "${saved}"`);
+			}
+			localStorage.removeItem(SAVED_CLOUD_PROVIDER_KEY);
+			return true;
+		}
+	} catch (e) {
+		console.warn('[Network] Failed to restore cloud provider:', e);
+	}
+	return false;
+}
+
+/**
  * Triggered when network reconnects (online)
  */
 function handleReconnect() {
 	console.log('[Network] 🟢 Connection restored!');
 
-	try {
-		const saved = localStorage.getItem(SAVED_CLOUD_PROVIDER_KEY) as CloudProvider | null;
-		if (saved && saved !== 'none') {
-			settingsStore.updateSettings({ cloudProvider: saved });
-			localStorage.removeItem(SAVED_CLOUD_PROVIDER_KEY);
-			console.log(`[Network] ⚡ Auto-restored cloudProvider back to "${saved}"`);
-		}
-	} catch (e) {
-		console.warn('[Network] Failed to restore cloud provider:', e);
-	}
+	restoreSavedCloudProviderIfNeeded();
 
 	if (notificationTimeout) clearTimeout(notificationTimeout);
 
@@ -199,7 +211,11 @@ async function checkInternetConnectivity() {
 			if (!get(networkStore).isOnline) {
 				handleReconnect();
 			} else {
+				const restored = restoreSavedCloudProviderIfNeeded();
 				networkStore.update((curr) => ({ ...curr, lastCheckedAt: Date.now() }));
+				if (restored) {
+					void syncPendingOfflineSessions();
+				}
 			}
 		} else {
 			if (get(networkStore).isOnline) {
@@ -233,6 +249,7 @@ export function initNetworkMonitor() {
 	if (!navigator.onLine) {
 		handleDisconnect('initial-offline');
 	} else {
+		restoreSavedCloudProviderIfNeeded();
 		if (initialSyncTimeout) clearTimeout(initialSyncTimeout);
 		initialSyncTimeout = setTimeout(() => {
 			void syncPendingOfflineSessions();
